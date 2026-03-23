@@ -3,10 +3,13 @@ from pymongo.errors import ConnectionFailure
 from urllib.parse import quote_plus
 from pydantic import ValidationError
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
+from bson import ObjectId
 
 # Import Pydantic models from schemas.py
 from .models import Run, RunInDB, AttackData, DefenseData, EvaluationData, Progress, RunConfig
+from config import MONGO_URI, MONGO_DB_NAME
+from db.models import ArenaState
 
 class DatabaseClient:
     def __init__(self, config):
@@ -64,13 +67,117 @@ class DatabaseClient:
             self.client.close()
             print("MongoDB connection closed.")
 
-    # --- Methods for handling large data references ---
-    # These methods would interact with your external storage module.
-    # For now, they are placeholders.
+ 
+    async def create_run(self, run_data: Dict[str, Any]) -> str:
+        """Creates a new run document in the database."""
+        run_id = run_data.get('run_id')
+        if not run_id:
+            raise ValueError("run_id is required")
 
-    # async def store_large_data(self, data: List[Dict[str, Any]]) -> str:
-    #     ...
-    # async def retrieve_large_data(self, reference: str) -> List[Dict[str, Any]]:
-    #     ...
+        # Ensure the run_id is unique before inserting
+        existing_run = await self.runs_collection.find_one({{"run_id": run_id}})
+        if existing_run:
+            raise ValueError(f"Run with id {run_id} already exists")
+
+        result = await self.runs_collection.insert_one(run_data)
+        return str(result.inserted_id)
+
+    async def get_run(self, run_id: str) -> Optional[Run]:
+        """Retrieves a single run by its ID."""
+        run_data = await self.runs_collection.find_one({{"run_id": run_id}})
+        if run_data:
+            return Run(**run_data)
+        return None
+
+    async def get_runs(self) -> List[Run]:
+        """Retrieves all runs from the database."""
+        runs_data = await self.runs_collection.find().to_list(length=None)
+        return [Run(**run) for run in runs_data]
+
+    async def update_run(self, run_id: str, update_data: Dict[str, Any]) -> bool:
+        """Updates an existing run document."""
+        result = await self.runs_collection.update_one({{"run_id": run_id}}, {{"\$set": update_data}})
+        return result.modified_count > 0
+
+    async def delete_run(self, run_id: str) -> bool:
+        """Deletes a run document by its ID."""
+        result = await self.runs_collection.delete_one({{"run_id": run_id}})
+        return result.deleted_count > 0
+
+    async def save_arena_state(self, run_id: str, state: ArenaState):
+        """Saves or updates the ArenaState for a given run_id."""
+        # We can use update_one with upsert=True to either insert a new state or update an existing one
+        await self.runs_collection.update_one(
+            {{"run_id": run_id}},
+            {{"\$set": state.dict()}},
+            upsert=True
+        )
+
+    async def get_arena_state(self, run_id: str) -> Optional[ArenaState]:
+        """Retrieves the ArenaState for a given run_id."""
+        run_data = await self.runs_collection.find_one({{"run_id": run_id}})
+        if run_data:
+            return ArenaState(**run_data)
+        return None
+
+    async def create_attack_prompt(self, prompt_data: Dict[str, Any]) -> str:
+        """Creates a new attack prompt document in the database."""
+        result = await self.attack_prompts_collection.insert_one(prompt_data)
+        return str(result.inserted_id)
+
+    async def get_attack_prompt(self, prompt_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves a single attack prompt by its ID."""
+        prompt_data = await self.attack_prompts_collection.find_one({{"_id": ObjectId(prompt_id)}})
+        return prompt_data
+
+    async def update_attack_prompt(self, prompt_id: str, update_data: Dict[str, Any]) -> bool:
+        """Updates an existing attack prompt document."""
+        result = await self.attack_prompts_collection.update_one({{"_id": ObjectId(prompt_id)}}, {{"\$set": update_data}})
+        return result.modified_count > 0
+
+    async def delete_attack_prompt(self, prompt_id: str) -> bool:
+        """Deletes an attack prompt document by its ID."""
+        result = await self.attack_prompts_collection.delete_one({{"_id": ObjectId(prompt_id)}})
+        return result.deleted_count > 0
+
+    async def create_defense_response(self, response_data: Dict[str, Any]) -> str:
+        """Creates a new defense response document in the database."""
+        result = await self.defense_responses_collection.insert_one(response_data)
+        return str(result.inserted_id)
+
+    async def get_defense_response(self, response_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves a single defense response by its ID."""
+        response_data = await self.defense_responses_collection.find_one({{"_id": ObjectId(response_id)}})
+        return response_data
+
+    async def update_defense_response(self, response_id: str, update_data: Dict[str, Any]) -> bool:
+        """Updates an existing defense response document."""
+        result = await self.defense_responses_collection.update_one({{"_id": ObjectId(response_id)}}, {{"\$set": update_data}})
+        return result.modified_count > 0
+
+    async def delete_defense_response(self, response_id: str) -> bool:
+        """Deletes a defense response document by its ID."""
+        result = await self.defense_responses_collection.delete_one({{"_id": ObjectId(response_id)}})
+        return result.deleted_count > 0
+
+    async def create_evaluation_result(self, result_data: Dict[str, Any]) -> str:
+        """Creates a new evaluation result document in the database."""
+        result = await self.evaluation_results_collection.insert_one(result_data)
+        return str(result.inserted_id)
+
+    async def get_evaluation_result(self, result_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves a single evaluation result by its ID."""
+        result_data = await self.evaluation_results_collection.find_one({{"_id": ObjectId(result_id)}})
+        return result_data
+
+    async def update_evaluation_result(self, result_id: str, update_data: Dict[str, Any]) -> bool:
+        """Updates an existing evaluation result document."""
+        result = await self.evaluation_results_collection.update_one({{"_id": ObjectId(result_id)}}, {{"\$set": update_data}})
+        return result.modified_count > 0
+
+    async def delete_evaluation_result(self, result_id: str) -> bool:
+        """Deletes an evaluation result document by its ID."""
+        result = await self.evaluation_results_collection.delete_one({{"_id": ObjectId(result_id)}})
+        return result.deleted_count > 0
 
 
