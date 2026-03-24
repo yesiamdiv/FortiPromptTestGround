@@ -9,8 +9,7 @@ from limited_engine.orchestrator import LimitedOrchestrator
 
 async def main():
     # Initialize database client
-    db_client = DatabaseClient()
-    await initialize_database(db_client)
+    db_client = initialize_database()
 
     # Instantiate APIGateway with the database client
     api_gateway = APIGateway(db_client=db_client)

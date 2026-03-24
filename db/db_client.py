@@ -1,3 +1,4 @@
+import config
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import ConnectionFailure
 from urllib.parse import quote_plus
@@ -12,7 +13,7 @@ from config import MONGO_URI, MONGO_DB_NAME
 from db.models import ArenaState
 
 class DatabaseClient:
-    def __init__(self, config):
+    def __init__(self):
         self.config = config
         self.client = None
         self.db = None
@@ -20,14 +21,14 @@ class DatabaseClient:
 
     async def connect(self):
         try:
-            mongo_uri = self.config.get('MONGO_URI')
+            mongo_uri = self.config.MONGO_URI
             if not mongo_uri:
                 # Fallback to constructing URI from components if MONGO_URI is not directly provided
-                username = quote_plus(self.config.get('MONGO_USERNAME', ''))
-                password = quote_plus(self.config.get('MONGO_PASSWORD', ''))
-                host = self.config.get('MONGO_HOST', 'localhost')
-                port = self.config.get('MONGO_PORT', '27017')
-                db_name = self.config.get('MONGO_DB_NAME', 'agentic_testing_ground')
+                username = self.config.MONGO_USERNAME
+                password = self.config.MONGO_PASSWORD
+                host = self.config.MONGO_HOST
+                port = self.config.MONGO_PORT
+                db_name = self.config.MONGO_DB_NAME
 
                 if username and password:
                     mongo_uri = f"mongodb://{username}:{password}@{host}:{port}/?retryWrites=true&w=majority"
@@ -35,7 +36,7 @@ class DatabaseClient:
                     mongo_uri = f"mongodb://{host}:{port}/?retryWrites=true&w=majority"
             else:
                 # If MONGO_URI is provided, use it directly
-                db_name = self.config.get('MONGO_DB_NAME', 'agentic_testing_ground')
+                db_name = self.config.MONGO_DB_NAME
 
             self.client = AsyncIOMotorClient(mongo_uri)
             await self.client.admin.command('ismaster') # Check connection

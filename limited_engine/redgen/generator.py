@@ -33,7 +33,6 @@ from .augmentation.encoding import (
 )
 
 from .engines.ollama_engine import OllamaEngine
-from api_gateway.main import api_gateway_instance as api_gateway
 from api_gateway.main import APIGateway
 
 # ─────────────────────────────────────────────
@@ -49,7 +48,7 @@ class TestCaseGenerator:
         seed: int = 42,
         engine: str = "groq",                # "groq" or "ollama"
         ollama_model: Optional[str] = None,    # used when engine="ollama"
-        api_gateway: Optional[APIGateway] = api_gateway,    # used when engine="ollama"
+        api_gateway: Optional[APIGateway] = None,    # used when engine="ollama"
         output_dir: str = "./output",    # directory to save prompts
     ):
 

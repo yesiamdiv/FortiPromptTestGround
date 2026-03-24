@@ -21,10 +21,15 @@ class APIGateway:
         self._register_socketio_events()
         # self._register_startup_shutdown_events()
 
+    def get_db_client(self) -> DatabaseClient:
+        return self.db_client
+
     def _register_http_routes(self):
         # Include your HTTP routers
         self.app.include_router(config.router, prefix="/api")
-        self.app.include_router(runs.router, prefix="/api", dependencies=[Depends(self.db_client)])
+        # self.app.include_router(runs.router, prefix="/api", dependencies=[Depends(self.get_db_client)])
+        self.app.include_router(runs.router, prefix="/api")
+
 
         @self.app.get("/")
         async def read_root():
