@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+from typing_extensions import TypedDict
 
 # --- Application-level Data Models ---
 
@@ -55,6 +56,27 @@ class RunInDB(BaseModel):
     evaluation_store_ref: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
+
+class ArenaState(TypedDict, total=False):
+    """
+    The payload that travels between every node in the graph.
+
+    All fields are optional (total=False) so nodes can be written to
+    return only the keys they actually update — LangGraph will merge
+    the partial dict back into the full state automatically.
+    """
+    run_id: str
+    goal: str
+    strategy: str
+    max_turns: int
+    turn_count: int
+    chat_history: list
+    current_prompt: str
+    current_response: str
+    evaluation_result: str
+    evaluation_reasoning: str
+    strategy_metadata: dict
+    final_outcome: str
 
 # Note: The ArenaState model from previous discussion is now implicitly handled within Run.attack_data, Run.defense_data, and Run.evaluation_data.
 # If a separate 'arena_states' collection is still desired for detailed turn-by-turn history, a dedicated model for it would be needed.

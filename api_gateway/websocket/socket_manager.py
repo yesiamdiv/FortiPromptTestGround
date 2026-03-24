@@ -32,6 +32,11 @@ class SocketIOManager:
         print(f"Broadcasting event '{event_name}' to room '{room}' with data: {data}")
         await self.sio.emit(event_name, data, room=room)
 
+    async def send_prompt_to_frontend(self, run_id: str, prompt: str):
+        """Sends a prompt to the frontend via Socket.IO."""
+        print(f"Sending prompt to frontend for run {run_id}")
+        await self.sio.emit("new_prompt", {"run_id": run_id, "prompt": prompt}, room=run_id)
+
     def get_connected_sids_in_room(self, room: str) -> List[str]:
         return self.room_sids.get(room, [])
 

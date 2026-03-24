@@ -180,4 +180,10 @@ class DatabaseClient:
         result = await self.evaluation_results_collection.delete_one({{"_id": ObjectId(result_id)}})
         return result.deleted_count > 0
 
+    def save_prompt(self, run_id: str, prompt: str, metadata: dict):
+        """Saves a prompt for a run to the database."""
+        # Implement the database save logic here
+        print(f"Saving prompt for run {run_id} to the database")
+        # Example:  self.runs_collection.insert_one({"run_id": run_id, "prompt": prompt, **metadata})
+
 

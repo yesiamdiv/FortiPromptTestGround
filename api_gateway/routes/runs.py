@@ -1,16 +1,13 @@
-from fastapi import APIRouter, HTTPException, status, Depends
 from typing import List
 
+from fastapi import APIRouter, HTTPException, status, Depends
 from db.db_client import DatabaseClient
-
-from ..schemas import AttackRequest, Run, RunInDB
-from api_gateway.main import get_db_client
+from api_gateway.schemas import AttackRequest, Run, RunInDB # Import AttackRequest, Run, RunInDB models
 
 router = APIRouter()
 
-
 @router.post("/runs", status_code=status.HTTP_201_CREATED, response_model=Run)
-async def create_run(attack_request: AttackRequest, db_client: DatabaseClient = Depends(get_db_client)):
+async def create_run(attack_request: AttackRequest, db_client: DatabaseClient):
     # Placeholder for run creation logic
     # This will likely involve creating a new Run object,
     # storing it in the database, and returning it.
@@ -18,7 +15,7 @@ async def create_run(attack_request: AttackRequest, db_client: DatabaseClient = 
         # Example: Create a Run object from the request
         new_run = Run(name=attack_request.run_id, status="created")
         # Store the run in the database using db_client
-        db_client.create_run(new_run)
+        await db_client.create_run(new_run.dict())
         return new_run
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
@@ -39,7 +36,7 @@ async def update_run(run_id: str):
 
 
 @router.get("/runs", response_model=List[Run])
-async def get_runs(db_client: DatabaseClient = Depends(get_db_client)):
+async def get_runs(db_client: DatabaseClient):
     # Placeholder for fetching all runs
     try:
         runs = db_client.get_all_runs()
@@ -49,7 +46,7 @@ async def get_runs(db_client: DatabaseClient = Depends(get_db_client)):
 
 
 @router.get("/runs/{run_id}", response_model=Run)
-async def get_run(run_id: str, db_client: DatabaseClient = Depends(get_db_client)):
+async def get_run(run_id: str, db_client: DatabaseClient):
     # Placeholder for fetching a specific run
     try:
         run = db_client.get_run(run_id)
