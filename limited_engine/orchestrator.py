@@ -59,32 +59,31 @@ class LimitedOrchestrator:
             self.run_counter += 1
             run_id = str(ObjectId()) # Generate a new ObjectId for run_id
             
-            # Prepare data for DB insertion using the DBRun model structure
-            db_run_data = DBRun( # Using DBRun model
+            # Initialize run with default values, config will be updated later
+            new_run = DBRunInDB(
                 run_id=run_id,
                 name=run_data.name,
+                status="initialized", # Default status
                 description=run_data.description,
                 components=run_data.components,
-                status="not_started",
-                config=RunConfig(), # Initialize with default RunConfig
+                config={}, # Initialize config as empty dict
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow()
             )
             
-            # Save the DBRun object to the database
-            await self.db_client.create_run(db_run_data.dict())
+            await self.db_client.create_run(new_run)
             
-            # Fetch the newly created run from the database to ensure all fields are correctly populated (e.g., created_at, updated_at, _id)
-            created_run_in_db = await self.db_client.get_run(run_id)
-            if not created_run_in_db:
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve newly created run")
-
-            # Return a RunResponse object for the API response
+            # Store in memory for quick access (optional, depends on orchestrator's needs)
+            self.runs[run_id] = new_run.dict(by_alias=True)
+            
+            # Return the created run response
             return RunResponse(
-                run_id=created_run_in_db.run_id,
-                name=created_run_in_db.name,
-                status=created_run_in_db.status,
-                config=created_run_in_db.config.dict(),
-                created_at=created_run_in_db.created_at,
-                updated_at=created_run_in_db.updated_at
+                run_id=new_run.run_id,
+                name=new_run.name,
+                status=new_run.status,
+                config=new_run.config, # Return the empty config
+                created_at=new_run.created_at,
+                updated_at=new_run.updated_at
             )
 
         @self.api_gateway.app.patch("/api/runs/{runId}", response_model=RunResponse) # Changed to RunResponse
@@ -172,8 +171,14 @@ class LimitedOrchestrator:
 
             existing_run_db = existing_run_db_data # It's already a DBRunInDB object or similar structure
             
+            # Ensure config and attack_config are dictionaries before updating
+            if existing_run_db.config is None:
+                existing_run_db.config = {}
+            if 'attack_config' not in existing_run_db.config:
+                existing_run_db.config['attack_config'] = {}
+
             # Update the attack_config within the run's config
-            existing_run_db.config.attack_config = config.dict()
+            existing_run_db.config['attack_config'] = config.dict()
             existing_run_db.updated_at = datetime.datetime.utcnow()
 
             # Update the run in the database

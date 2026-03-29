@@ -25,16 +25,7 @@ async def test_create_run():
         "name": "My Test Run",
         "status": "initialized",
         "description":"some description",
-        "components": {"component1": "something1", "component2": "something2"},
-        "config": {
-            "attack_config": {
-                "iterations": 5,
-                "domain": "cybersecurity",
-                "parameters": {"engine": "ollama", "model": "dolphin-mistral:7b-v2.6"}
-            }
-        },
-        "created_at": get_current_time_iso(),
-        "updated_at": get_current_time_iso()
+        "components": {"component1": "something1", "component2": "something2"}
     }
     try:
         async with httpx.AsyncClient() as client:
