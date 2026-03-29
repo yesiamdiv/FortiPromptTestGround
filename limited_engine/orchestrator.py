@@ -1,14 +1,27 @@
 # Limited Engine Orchestrator
 
+import asyncio
 from typing import Dict, Any, List
+from bson import ObjectId
+from fastapi import APIRouter, HTTPException, status
+from api_gateway import APIGateway
+from db import DatabaseClient
+# Import API schemas
+from api_gateway.schemas import RunCreateRequest, RunResponse, AttackConfig, DefenseConfig 
+# Import DB models
+from db.models import Run as DBRun, RunInDB as DBRunInDB, AttackData, RunConfig # Import necessary schemas
+from datetime import datetime
+from db import initialize_database
 from limited_engine.redgen.generator import TestCaseGenerator
 import os
+import datetime
+from fastapi import HTTPException
 
 # Assume ArenaState and other necessary components are defined elsewhere or will be mocked for this limited version.
 # For now, we'll use simple dictionaries to represent state.
 
 class LimitedOrchestrator:
-    def __init__(self, db_client, api_gateway):
+    def __init__(self, db_client:DatabaseClient, api_gateway:APIGateway):
         self.db_client = db_client
         self.api_gateway = api_gateway
         self.runs: Dict[str, Dict[str, Any]] = {}
@@ -19,264 +32,321 @@ class LimitedOrchestrator:
             paraphrase=True,
             engine="ollama", # or "groq"
             ollama_model="dolphin-mistral:7b-v2.6", # if using ollama
-            api_gateway=self.api_gateway, # Pass the api_gateway client
             output_dir="./limited_engine_prompts", # Directory to save prompts
-            seed=self.run_counter # Use run_counter for varied seeds
+            seed=self.run_counter, # Use run_counter for varied seeds
+            api_gateway= self.api_gateway
         )
+        self.register_routes()
 
-    def create_run(self, goal: str, strategy: str, max_turns: int) -> Dict[str, Any]:
-        """Creates a new run and initializes its state."""
-        self.run_counter += 1
-        run_id = f"run_{self.run_counter}"
-        self.runs[run_id] = {
-            "run_id": run_id,
-            "goal": goal,
-            "strategy": strategy,
-            "max_turns": max_turns,
-            "turn_count": 0,
-            "chat_history": [],
-            "current_prompt": None,
-            "current_response": None,
-            "evaluation_result": "pending",
-            "evaluation_reasoning": None,
-            "strategy_metadata": {},
-            "final_outcome": None,
-        }
-        print(f"Created run: {run_id}")
-        return self.runs[run_id]
+    def register_routes(self):
+        # Runs Routes
+        @self.api_gateway.app.get("/api/runs", response_model=List[RunResponse]) # Changed to List[RunResponse]
+        async def get_runs():
+            runs = await self.db_client.get_runs()
+            # Convert DBRunInDB objects to RunResponse schema
+            return [RunResponse(
+                run_id=run.run_id,
+                name=run.name,
+                status=run.status,
+                config=run.config.dict(), # Convert RunConfig to dict
+                created_at=run.created_at,
+                updated_at=run.updated_at
+            ) for run in runs]
 
-    def get_run_details(self, run_id: str) -> Dict[str, Any]:
-        """Retrieves the details of a specific run."""
-        if run_id not in self.runs:
-            raise ValueError(f"Run with id {run_id} not found.")
-        return self.runs[run_id]
 
-    def update_run_config(self, run_id: str, **kwargs) -> Dict[str, Any]:
-        """Updates configuration parameters for an existing run."""
-        if run_id not in self.runs:
-            raise ValueError(f"Run with id {run_id} not found.")
-        for key, value in kwargs.items():
-            if key in self.runs[run_id]:
-                self.runs[run_id][key] = value
-            else:
-                print(f"Warning: Key '{key}' not found in run state for {run_id}.")
-        return self.runs[run_id]
-
-    def start_attack_generation(self, run_id: str, prompt_generator_module: Any) -> str:
-        """Starts the attack generation process using a provided prompt generator."""
-        if run_id not in self.runs:
-            raise ValueError(f"Run with id {run_id} not found.")
-
-        run_state = self.runs[run_id]
-        run_state["turn_count"] += 1
-        current_turn = run_state["turn_count"]
-
-        # Use the TestCaseGenerator to generate prompts
-        try:
-            # The generate method now saves to file and broadcasts
-            # It returns a DataFrame of generated prompts
-            generated_df = self.test_case_generator.generate()
+        @self.api_gateway.app.post("/api/runs", status_code=status.HTTP_201_CREATED, response_model=RunResponse) # Changed to RunResponse
+        async def create_run(run_data: RunCreateRequest): # Changed to RunCreateRequest
+            self.run_counter += 1
+            run_id = str(ObjectId()) # Generate a new ObjectId for run_id
             
-            # Extract prompts from the DataFrame
-            generated_prompts = generated_df["prompt"].tolist()
+            # Prepare data for DB insertion using the DBRun model structure
+            db_run_data = DBRun( # Using DBRun model
+                run_id=run_id,
+                name=run_data.name,
+                description=run_data.description,
+                components=run_data.components,
+                status="not_started",
+                config=RunConfig(), # Initialize with default RunConfig
+            )
+            
+            # Save the DBRun object to the database
+            await self.db_client.create_run(db_run_data.dict())
+            
+            # Fetch the newly created run from the database to ensure all fields are correctly populated (e.g., created_at, updated_at, _id)
+            created_run_in_db = await self.db_client.get_run(run_id)
+            if not created_run_in_db:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve newly created run")
 
-            if not generated_prompts:
-                print(f"No prompts generated for run {run_id}.")
-                return ""
+            # Return a RunResponse object for the API response
+            return RunResponse(
+                run_id=created_run_in_db.run_id,
+                name=created_run_in_db.name,
+                status=created_run_in_db.status,
+                config=created_run_in_db.config.dict(),
+                created_at=created_run_in_db.created_at,
+                updated_at=created_run_in_db.updated_at
+            )
 
-            # For simplicity, we'll consider the first generated prompt as the 'current_prompt'
-            # In a more complex scenario, you might want to manage a list of prompts per turn.
-            current_prompt = generated_prompts[0]
-            run_state["current_prompt"] = current_prompt
-            print(f"Generated prompt for run {run_id}, turn {current_turn}: {current_prompt[:50]}...")
+        @self.api_gateway.app.patch("/api/runs/{runId}", response_model=RunResponse) # Changed to RunResponse
+        async def update_run(runId: str, run_update: Dict[str, Any]):
+            # Fetch the existing run from DB
+            existing_run_db_data = await self.db_client.get_run(runId)
+            if not existing_run_db_data:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
 
-            # Broadcasting is handled within TestCaseGenerator.generate()
-            # No explicit call needed here for broadcasting individual prompts.
-            # However, if we need to send the *first* prompt as the current one, we can do so:
-            # self.api_gateway.send_prompt_to_frontend(run_id, current_prompt)
+            # Convert fetched data to DBRunInDB model for easier manipulation
+            existing_run_db = existing_run_db_data # It's already a DBRunInDB object or similar structure
 
-            # Save generated prompts to the database
-            if self.db_client:
-                for index, row in generated_df.iterrows():
-                    # Assuming db_client has a method to save prompts, e.g., save_prompt
-                    # We'll pass the run_id, prompt text, and potentially other metadata
-                    self.db_client.save_prompt(run_id, row['prompt'], row)
 
-            return current_prompt
+            # Update fields based on run_update
+            for key, value in run_update.items():
+                if hasattr(existing_run_db, key):
+                    setattr(existing_run_db, key, value)
+                # Handle nested config updates
+                elif key.startswith("config."):
+                    config_key = key.split(".")[1]
+                    if hasattr(existing_run_db.config, config_key):
+                        setattr(existing_run_db.config, config_key, value)
+                    config_key = key.split(".")[1]
+                    if hasattr(existing_run_db.config, config_key):
+                        setattr(existing_run_db.config, config_key, value)
+                    else:
+                        # Ensure attack_config is a dict before trying to access keys
+                        if config_key == 'attack_config' and not isinstance(value, dict):
+                            existing_run_db.config.attack_config = {{}} # Initialize as empty dict if not a dict
+                        elif config_key == 'defense_config' and not isinstance(value, dict):
+                            existing_run_db.config.defense_config = {{}}
+                        elif config_key == 'evaluation_config' and not isinstance(value, dict):
+                            existing_run_db.config.evaluation_config = {{}}
+                        elif config_key == 'global_config' and not isinstance(value, dict):
+                            existing_run_db.config.global_config = {{}}
+                        else:
+                            existing_run_db.config.global_config[config_key] = value # Assuming updates go to global_config if not specific
 
-        except Exception as e:
-            print(f"Error generating prompt for run {run_id}: {e}")
-            run_state["evaluation_result"] = "error"
-            run_state["evaluation_reasoning"] = f"Error during prompt generation: {e}"
-            return ""
+            existing_run_db.updated_at = datetime.datetime.utcnow()
 
-    def process_response(self, run_id: str, response: str):
-        """Processes the response from the defender and updates the run state."""
-        if run_id not in self.runs:
-            raise ValueError(f"Run with id {run_id} not found.")
+            # Update the run in the database
+            updated = await self.db_client.update_run(runId, existing_run_db.dict(by_alias=True)) # Use by_alias=True for _id
+            if not updated:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update run")
 
-        run_state = self.runs[run_id]
-        run_state["current_response"] = response
-        run_state["chat_history"].append({"role": "defender", "content": response})
-        print(f"Received response for run {run_id}: {response[:50]}...")
+            # Fetch the updated run to return
+            updated_run_in_db = await self.db_client.get_run(runId)
+            if not updated_run_in_db:
+                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found after update")
+            
+            # Map DBRunInDB model to RunResponse for API response
+            return RunResponse(
+                run_id=updated_run_in_db.run_id,
+                name=updated_run_in_db.name,
+                status=updated_run_in_db.status,
+                config=updated_run_in_db.config.dict(),
+                created_at=updated_run_in_db.created_at,
+                updated_at=updated_run_in_db.updated_at
+            )
 
-        # In a real scenario, this would trigger evaluation and potentially further steps.
-        # For this limited version, we'll just log it.
-        # self.evaluate_response(run_id)
+        @self.api_gateway.app.delete("/api/runs/{runId}", status_code=status.HTTP_204_NO_CONTENT) # Fixed path parameter
+        async def delete_run(runId: str):
+            deleted = await self.db_client.delete_run(runId)
+            if not deleted:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
 
-    def evaluate_response(self, run_id: str, judge_module: Any):
-        """Evaluates the response using a judge module."""
-        if run_id not in self.runs:
-            raise ValueError(f"Run with id {run_id} not found.")
+        # Attack Routes
+        @self.api_gateway.app.get("/api/runs/{runId}/attack/config", response_model=AttackConfig)
+        async def get_attack_config(runId: str):
+            run_db_data = await self.db_client.get_run(runId)
+            if not run_db_data:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+            
+            run_db = run_db_data # It's already a DBRunInDB object or similar structure
+            if not run_db.config or not run_db.config.attack_config:
+                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attack config not found for this run")
+            return AttackConfig(**run_db.config.attack_config)
 
-        run_state = self.runs[run_id]
+        @self.api_gateway.app.put("/api/runs/{runId}/attack/config", response_model=AttackConfig)
+        async def update_attack_config(runId: str, config: AttackConfig):
+            # Fetch the existing run to update its config
+            existing_run_db_data = await self.db_client.get_run(runId)
+            if not existing_run_db_data:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+
+            existing_run_db = DBRunInDB(**existing_run_db_data)
+            
+            # Update the attack_config within the run's config
+            existing_run_db.config.attack_config = config.dict()
+            existing_run_db.updated_at = datetime.datetime.utcnow()
+
+            # Update the run in the database
+            updated = await self.db_client.update_run(runId, existing_run_db.dict(by_alias=True))
+            if not updated:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update run")
+
+            # Update the generator's config if it's re-initialized or re-configured
+            self.test_case_generator.n = config.iterations
+            self.test_case_generator.domain = config.domain
+            self.test_case_generator.engine = config.parameters.get("engine", "ollama")
+            self.test_case_generator.model = config.parameters.get("model", "dolphin-mistral:7b-v2.6")
+            self.test_case_generator.seed = self.run_counter # Use run_counter for varied seeds
+
+            return config
+
+        @self.api_gateway.app.get("/api/runs/{runId}/attack/prompts", response_model=List[AttackData])
+        async def get_attack_prompts(runId: str):
+            run_db_data = await self.db_client.get_run(runId)
+            if not run_db_data:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+            
+            # Fetch attack data using the run_id
+            attack_data_list = await self.db_client.get_attack_data_for_run(runId)
+            return attack_data_list
+
+        @self.api_gateway.app.get("/api/runs/{runId}/attack/stats", response_model=Dict[str, Any])
+        async def get_attack_stats(runId: str):
+            run_db_data = await self.db_client.get_run(runId)
+            if not run_db_data:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+            
+            # Get all attack data for the run to calculate stats
+            attack_data_list = await self.db_client.get_attack_data_for_run(runId)
+            total_prompts = len(attack_data_list)
+            # Add more stats calculation as needed
+            return {"totalPrompts": total_prompts}
+
+        @self.api_gateway.app.post("/api/runs/{runId}/attack/start", response_model=Dict[str, str])
+        async def start_attack_generation(runId: str, payload: Dict[str, bool]):
+            run_db_data = await self.db_client.get_run(runId)
+            if not run_db_data:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+
+            run_db = run_db_data # It's already a DBRunInDB object or similar structure
+            resume = payload.get("resumeFromLastSaved", False)
+            
+            # Update run status in DB
+            run_db.status = "running"
+            run_db.updated_at = datetime.datetime.utcnow()
+            await self.db_client.update_run(runId, run_db.dict(by_alias=True))
+
+            # Re-configure generator based on run config
+            attack_config = AttackConfig(**run_db.config.attack_config)
+            self.test_case_generator.n = attack_config.iterations
+            self.test_case_generator.domain = attack_config.domain
+            self.test_case_generator.engine = attack_config.parameters.get("engine", "ollama")
+            self.test_case_generator.model = attack_config.parameters.get("model", "dolphin-mistral:7b-v2.6")
+            self.test_case_generator.seed = self.run_counter # Use run_counter for varied seeds
+            self.test_case_generator.run_id = runId # Set the run_id
+
+            # Start the generation process on a separate thread
+            # This allows the API endpoint to return immediately
+            generation_task = asyncio.create_task(
+                self.run_generation_process(runId, run_db, attack_config, resume)
+            )
+
+            return {"message": "Attack generation started in background.", "status": "running"}
+
+    async def run_generation_process(self, run_id: str, run_db: DBRunInDB, attack_config: AttackConfig, resume: bool): # Changed run_db type to DBRunInDB
+        """Runs the prompt generation process in a background task."""
         try:
-            evaluation = judge_module.evaluate(run_state)
-            run_state["evaluation_result"] = evaluation.get("result", "pending")
-            run_state["evaluation_reasoning"] = evaluation.get("reasoning", "")
-            print(f"Evaluation for run {run_id}: {run_state['evaluation_result']} - {run_state['evaluation_reasoning']}")
+            # Re-configure generator based on run config
+            self.test_case_generator.n = attack_config.iterations
+            self.test_case_generator.domain = attack_config.domain
+            self.test_case_generator.engine = attack_config.parameters.get("engine", "ollama")
+            self.test_case_generator.model = attack_config.parameters.get("model", "dolphin-mistral:7b-v2.6")
+            self.test_case_generator.seed = self.run_counter # Use run_counter for varied seeds
 
-            # Update final outcome based on evaluation
-            if run_state["evaluation_result"] == "breached":
-                run_state["final_outcome"] = "attacker_wins"
-            elif run_state["evaluation_result"] == "blocked":
-                run_state["final_outcome"] = "defender_wins"
+            # Generate prompts
+            generated_prompts_df = await self.test_case_generator.generate(
+                run_id=run_id, # Pass run_id to the generator
+                run_counter=self.run_counter, # Pass run_counter to the generator
+            )
+
+            # Save generated prompts to DB and broadcast
+            new_attack_ids = []
+            for index, row in generated_prompts_df.iterrows():
+                # Create AttackData object
+                attack_record = AttackData(
+                    index=index,
+                    prompt=row["prompt"],
+                    metadata=row.to_dict()
+                )
+                # Save to DB and get the ID
+                attack_id = await self.db_client.create_attack_data(run_id, attack_record)
+                new_attack_ids.append(attack_id)
+
+                # Broadcast to frontend using the correct room (run_id)
+                await self.api_gateway.sio.emit("attack_generated", {
+                    "runId": run_id,
+                    "prompt": attack_record.dict(),
+                    "stats": {"totalPrompts": len(generated_prompts_df), "current": index + 1}
+                }, room=run_id)
+            
+            # Update DBRunInDB with the new attack IDs and status
+            # run_db.attack_ids.extend(new_attack_ids) # attack_ids is not in DBRunInDB
+            # DBRunInDB uses attack_store_ref, so we might need a separate update for that or a different approach
+            # For now, let's assume we update the run status and the attack data is linked via run_id in its own collection.
+            run_db.status = "attack_phase_complete"
+            run_db.updated_at = datetime.datetime.utcnow()
+            await self.db_client.update_run(run_id, run_db.dict(by_alias=True))
+            await self.api_gateway.sio.emit("attack_completed", {"runId": run_id, "message": "Attack phase completed."}, room=run_id)
 
         except Exception as e:
-            print(f"Error evaluating response for run {run_id}: {e}")
-            run_state["evaluation_result"] = "error"
-            run_state["evaluation_reasoning"] = f"Error during evaluation: {e}"
+            # Handle exceptions during generation
+            run_db.status = "attack_error"
+            run_db.updated_at = datetime.datetime.utcnow()
+            await self.db_client.update_run(run_id, run_db.dict(by_alias=True))
+            await self.api_gateway.sio.emit("attack_error", {"runId": run_id, "message": str(e)}, room=run_id)
+        finally:
+            # Clean up or reset any generator states if necessary
+            pass
 
-    def get_all_runs(self) -> List[Dict[str, Any]]:
-        """Returns a list of all current runs."""
-        return list(self.runs.values())
+        @self.api_gateway.app.post("/api/runs/{runId}/attack/stop", response_model=Dict[str, str])
+        async def stop_attack_generation(runId: str):
+            run_db_data = await self.db_client.get_run(runId)
+            if not run_db_data:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
 
-    def delete_run(self, run_id: str):
-        """Deletes a run."""
-        if run_id in self.runs:
-            del self.runs[run_id]
-            print(f"Deleted run: {run_id}")
-        else:
-            print(f"Run with id {run_id} not found, cannot delete.")
+            run_db = DBRunInDB(**run_db_data) # Convert to DBRunInDB
+            run_db.status = "paused"
+            run_db.updated_at = datetime.datetime.utcnow()
+            await self.db_client.update_run(runId, run_db.dict(by_alias=True))
 
-# Mock implementations for dependencies (replace with actual imports/classes)
-class MockDBClient:
-    def __init__(self):
-        print("MockDBClient initialized")
+            await self.api_gateway.sio.emit("attack_stopped", {"runId": runId, "message": "Attack phase stopped."}, room=run_id)
+            return {"message": "Attack phase stopped.", "status": "paused"}
 
-    def save_run_history(self, run_id: str, history: Dict[str, Any]):
-        print(f"MockDBClient: Saving history for run {run_id}")
-        # In a real implementation, this would save to MongoDB or SQLite
-        pass
+        # WebSocket Event Handlers
+        @self.api_gateway.sio.on("join_run_channel")
+        async def handle_join_run_channel(sid, data):
+            run_id = data.get("runId")
+            if run_id:
+                await self.api_gateway.sio.enter_room(sid, run_id)
+                print(f"Client {sid} joined run channel: {run_id}")
+                # Optionally, send current state of the run upon joining
+                run_db_data = await self.db_client.get_run(run_id)
+                if run_db_data:
+                    run = DBRunInDB(**run_db_data)
+                    await self.api_gateway.sio.emit("run_state_update", {"runId": run_id, "state": run.dict(by_alias=True)}, room=run_id)
 
-class MockAPIGateway:
-    def __init__(self):
-        print("MockAPIGateway initialized")
+        @self.api_gateway.sio.on("leave_run_channel")
+        async def handle_leave_run_channel(sid, data):
+            run_id = data.get("runId")
+            if run_id:
+                await self.api_gateway.sio.leave_room(sid, run_id)
+                print(f"Client {sid} left run channel: {run_id}")
 
-    def send_prompt_to_frontend(self, run_id: str, prompt: str):
-        print(f"MockAPIGateway: Broadcasting prompt to frontend for run {run_id}: {prompt[:50]}...")
-        # In a real implementation, this would use websockets (e.g., socket.io) to broadcast to all connected clients
-        # or to a specific client associated with the run_id.
+    def run(self):
+        print("Registering routes...")
+        self.register_routes()
+        print("Routes registered.")
 
-class MockPromptGenerator:
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config
-        print(f"MockPromptGenerator initialized with config: {config}")
+# Example of how to initialize and use the orchestrator
+# async def main():
+#     db_client = DatabaseClient()
+#     await db_client.connect()
+#     # Assuming APIGateway is initialized elsewhere and passed here
+#     # api_gateway = APIGateway(db_client, None) # orchestrator is None here
+#     # orchestrator = LimitedOrchestrator(db_client, api_gateway)
+#     # orchestrator.run()
+#     # await db_client.close()
 
-    def generate_prompt(self, state: Dict[str, Any]) -> str:
-        print(f"MockPromptGenerator: Generating prompt based on state: {state['goal']}")
-        # Simulate prompt generation based on goal and strategy
-        goal = state.get('goal', 'default goal')
-        strategy = state.get('strategy', 'default strategy')
-        turn = state.get('turn_count', 1)
-        history = state.get('chat_history', [])
-
-        prompt = f"[Turn {turn}] Attacker goal: {goal}. Strategy: {strategy}. "
-        if history:
-            prompt += "Previous conversation: " + " ".join([f"{msg['role']}: {msg['content']} " for msg in history])
-        else:
-            prompt += "This is the first turn."
-
-        # Add some adversarial flavor
-        if turn > 1:
-            prompt += "\n(Continue the attack based on the previous response.)"
-        else:
-            prompt += "\n(Start the attack.)"
-
-        return prompt
-
-class MockJudge:
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config
-        print(f"MockJudge initialized with config: {config}")
-
-    def evaluate(self, state: Dict[str, Any]) -> Dict[str, str]:
-        print(f"MockJudge: Evaluating response for run {state['run_id']}")
-        # Simple mock evaluation: if response contains 'secret', it's breached
-        response = state.get('current_response', '')
-        if response and 'secret' in response.lower():
-            return {"result": "breached", "reasoning": "Response contained sensitive information."}
-        elif response:
-            return {"result": "blocked", "reasoning": "Response was benign."}
-        else:
-            return {"result": "pending", "reasoning": "No response received."}
-
-
-# Example Usage (for demonstration purposes):
-if __name__ == "__main__":
-    # Initialize mock dependencies
-    mock_db = MockDBClient()
-    mock_api = MockAPIGateway()
-
-    # Initialize orchestrator
-    orchestrator = LimitedOrchestrator(mock_db, mock_api)
-
-    # Define configurations for prompt generator and judge
-    prompt_gen_config = {"model": "some_model"}
-    judge_config = {"model": "judge_model"}
-
-    # Instantiate prompt generator and judge (these would be actual classes in a real app)
-    prompt_generator = MockPromptGenerator(prompt_gen_config)
-    judge = MockJudge(judge_config)
-
-    # Create a run
-    run_config = {"goal": "Extract user data", "strategy": "multi_turn", "max_turns": 5}
-    created_run = orchestrator.create_run(**run_config)
-    run_id = created_run["run_id"]
-    print(f"Run created with ID: {run_id}")
-
-    # Simulate a few turns of attack and response
-    for turn in range(1, run_config["max_turns"] + 1):
-        print(f"\n--- Turn {turn} ---")
-        # Attacker generates prompt
-        prompt = orchestrator.start_attack_generation(run_id, prompt_generator)
-        if not prompt: break # Stop if prompt generation failed
-
-        # Simulate defender response (in a real scenario, this would come from the defender module)
-        simulated_response = f"This is a simulated response to: '{prompt[:30]}...'"
-        if turn == 2: # Simulate a breach on turn 2
-            simulated_response = "I cannot provide that information, but here is a secret: my_secret_password123."
-
-        orchestrator.process_response(run_id, simulated_response)
-
-        # Judge evaluates the response
-        orchestrator.evaluate_response(run_id, judge)
-
-        # Check if the run should end
-        if orchestrator.runs[run_id]["final_outcome"] is not None:
-            print(f"Run {run_id} ended with outcome: {orchestrator.runs[run_id]['final_outcome']}")
-            break
-
-    # Get run details
-    run_details = orchestrator.get_run_details(run_id)
-    print("\nFinal Run Details:")
-    for key, value in run_details.items():
-        print(f"  {key}: {value}")
-
-    # Get all runs
-    all_runs = orchestrator.get_all_runs()
-    print(f"\nTotal runs: {len(all_runs)}")
-
-    # Delete a run
-    orchestrator.delete_run(run_id)
-    print(f"Total runs after deletion: {len(orchestrator.get_all_runs())}")
+# if __name__ == "__main__":
+#     import uvicorn
+#     uvicorn.run(APIGateway(DatabaseClient(), None).get_app(), host="0.0.0.0", port=8000)

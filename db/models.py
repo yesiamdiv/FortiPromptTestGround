@@ -2,31 +2,31 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from typing_extensions import TypedDict
+from bson import ObjectId
 
 # --- Application-level Data Models ---
+
+from typing import Optional, List, Dict, Any
+from datetime import datetime
+from typing_extensions import TypedDict
+from bson import ObjectId
+
+# --- Data Models ---
 
 class AttackData(BaseModel):
     index: int
     prompt: str
-    response: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 class DefenseData(BaseModel):
     index: int
-    input_text: str
-    response: Optional[str] = None
+    response: str
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 class EvaluationData(BaseModel):
     index: int
     score: float
     feedback: Optional[str] = None
-
-class Progress(BaseModel):
-    # Placeholder for progress tracking. Add fields as needed.
-    # Example: current_turn: int = 0
-    # Example: status: str = "not_started"
-    pass
 
 class RunConfig(BaseModel):
     global_config: Dict[str, Any] = Field(default_factory=dict)
@@ -35,9 +35,11 @@ class RunConfig(BaseModel):
     evaluation_config: Dict[str, Any] = Field(default_factory=dict)
 
 class Run(BaseModel):
+    description: str = Field(default="", description="Run description")
+    components: Dict[str, Any] = Field(default_factory=dict, description="Run components")
+    run_id: str = Field(default_factory=lambda: str(ObjectId())) # Custom run ID
     name: str
     status: str
-    progress: Progress = Field(default_factory=Progress)
     config: RunConfig = Field(default_factory=RunConfig)
     attack_data: List[AttackData] = Field(default_factory=list)
     defense_data: List[DefenseData] = Field(default_factory=list)
@@ -45,15 +47,26 @@ class Run(BaseModel):
 
 # --- Database-level Model ---
 
+class AttackDataInDB(BaseModel):
+    run_id: str
+    attack_prompts: List[AttackData]
+
+class DefenceDataInDB(BaseModel):
+    run_id: str
+    defence_responses: List[DefenseData]
+
+class EvaluationDataInDB(BaseModel):
+    run_id: str
+    evaluation_results: List[EvaluationData]
+
 class RunInDB(BaseModel):
-    id: Optional[str] = Field(alias="_id") # Maps to MongoDB's _id
+    run_id: str
     name: str
     status: str
-    progress: Progress
     config: RunConfig
-    attack_store_ref: Optional[str] = None
-    defense_store_ref: Optional[str] = None
-    evaluation_store_ref: Optional[str] = None
+    attack_store_ref: Optional[str] = None # Reference to attack data collection/document
+    defense_store_ref: Optional[str] = None # Reference to defense data collection/document
+    evaluation_store_ref: Optional[str] = None # Reference to evaluation data collection/document
     created_at: datetime
     updated_at: Optional[datetime] = None
 
@@ -77,7 +90,3 @@ class ArenaState(TypedDict, total=False):
     evaluation_reasoning: str
     strategy_metadata: dict
     final_outcome: str
-
-# Note: The ArenaState model from previous discussion is now implicitly handled within Run.attack_data, Run.defense_data, and Run.evaluation_data.
-# If a separate 'arena_states' collection is still desired for detailed turn-by-turn history, a dedicated model for it would be needed.
-# For now, we are consolidating turn-level data within the Run model as per the provided document.

@@ -20,6 +20,8 @@ from typing import Optional
 
 import pandas as pd
 
+from api_gateway import APIGateway
+
 from .redgen_payloads.loader import (
     load_templates,
     load_payloads_from_domain,
@@ -33,7 +35,6 @@ from .augmentation.encoding import (
 )
 
 from .engines.ollama_engine import OllamaEngine
-from api_gateway.main import APIGateway
 
 # ─────────────────────────────────────────────
 
@@ -48,10 +49,10 @@ class TestCaseGenerator:
         seed: int = 42,
         engine: str = "groq",                # "groq" or "ollama"
         ollama_model: Optional[str] = None,    # used when engine="ollama"
-        api_gateway: Optional[APIGateway] = None,    # used when engine="ollama"
         output_dir: str = "./output",    # directory to save prompts
+        api_gateway: APIGateway = None,
     ):
-
+        self.api_gateway = api_gateway
         self.n = n
         self.domain = domain
         self.seed = seed
@@ -74,7 +75,6 @@ class TestCaseGenerator:
         self.engine = engine
         self.model = None
         self.llm = OllamaEngine(model=ollama_model or "dolphin-mistral:7b-v2.6")
-        self.api_gateway = api_gateway
         self.output_dir = output_dir
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
@@ -95,19 +95,19 @@ class TestCaseGenerator:
 
     # ─────────────────────────────────────────────
 
-    def _paraphrase(self, text):
+    async def _paraphrase(self, text):
 
         if not self.llm:
             return None
 
         try:
-            return self.llm.paraphrase(text)
+            return await self.llm.paraphrase(text)
         except Exception:
             return None
 
     # ─────────────────────────────────────────────
 
-    def _paraphrase_payloads(self, payloads):
+    async def _paraphrase_payloads(self, payloads):
 
         new_items = []
 
@@ -195,7 +195,7 @@ class TestCaseGenerator:
 
     # ─────────────────────────────────────────────
 
-    def generate(self) -> pd.DataFrame:
+    async def generate(self, run_id: str = None, run_counter: int = None) -> pd.DataFrame:
 
         k = max(2, self.n // 10)
 
@@ -257,13 +257,17 @@ class TestCaseGenerator:
                 f.write(prompt_text)
 
             # Broadcast prompt to frontend via API Gateway
-            if self.api_gateway:
+            if self.api_gateway and hasattr(self.api_gateway.sio, "emit"):
                 # Assuming api_gateway has a method like send_prompt_to_frontend
-                # We need to pass a run_id, which is not available here. 
+                # We need to pass a run_id, which is not available here.
                 # For now, we'll use a placeholder or a generic broadcast.
                 # In a real integration, this would be tied to a specific run.
                 run_id = f"run_{self.run_counter}" # Placeholder run_id
-                self.api_gateway.send_prompt_to_frontend(run_id, prompt_text)
+                await self.api_gateway.sio.emit("attack_generated", {
+                    "runId": run_id,
+                    "prompt": record, # Send the full record for more details
+                    "stats": {"totalPrompts": self.n, "current": i + 1}
+                })
 
         df = pd.DataFrame(prompts_generated)
         return df

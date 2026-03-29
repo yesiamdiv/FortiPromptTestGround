@@ -60,7 +60,7 @@ class OllamaEngine:
             time.sleep(self._min_interval - elapsed)
         self._last_call_time = time.time()
 
-    def paraphrase(self, text: str, retries: int = 3) -> Optional[str]:
+    async def paraphrase(self, text: str, retries: int = 3) -> Optional[str]:
         """Return a paraphrased version of ``text`` or ``None`` on failure."""
 
         # join the system prompt with the actual text so the model understands

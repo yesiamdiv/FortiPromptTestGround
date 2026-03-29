@@ -1,44 +1,25 @@
-from typing import List
-
-from fastapi import APIRouter, HTTPException, status, Depends
-import fastapi
-from db.db_client import DatabaseClient
-from api_gateway.schemas import AttackRequest, Run, RunInDB # Import AttackRequest, Run, RunInDB models
+# api_gateway/routes/runs.py
+from fastapi import APIRouter, HTTPException, status
+from api_gateway.schemas import Run, RunInDB  # Assuming these schemas exist
 
 router = APIRouter()
 
-@router.post("/runs", status_code=status.HTTP_201_CREATED, response_model=None)
-async def create_run(attack_request: AttackRequest):
+@router.get("/api/runs", response_model=list[Run])
+async def list_runs():
+    """Fetches a list of all test runs."""
     pass
 
-
-@router.post("/runs/{run_id}/start")
-async def start_run(run_id: str):
-    # Placeholder for starting a run
-    # This will likely involve fetching the run from the database,
-    # and then starting the attack process in the engine.
+@router.post("/api/runs", status_code=status.HTTP_201_CREATED, response_model=RunInDB)
+async def create_run(run: Run):
+    """Creates a new test run."""
     pass
 
-
-@router.put("/runs/{run_id}")
-async def update_run(run_id: str):
-    # Placeholder for updating a run's configuration
+@router.patch("/api/runs/{runId}", response_model=RunInDB)
+async def update_run(runId: str, run: Run):
+    """Updates an existing test run's metadata or status."""
     pass
 
-
-@router.get("/runs", response_model=List[Run])
-async def get_runs():
-    # Placeholder for fetching all runs
-    pass
-
-
-@router.get("/runs/{run_id}", response_model=Run)
-async def get_run(run_id: str):
-    # Placeholder for fetching a specific run
-    pass
-
-
-@router.post("/runs/{run_id}/stop")
-async def stop_run(run_id: str):
-    # Placeholder for stopping a run
+@router.delete("/api/runs/{runId}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_run(runId: str):
+    """Deletes a test run."""
     pass

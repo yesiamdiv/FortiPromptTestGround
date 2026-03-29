@@ -3,14 +3,19 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import ConnectionFailure
 from urllib.parse import quote_plus
 from datetime import datetime
+import config
 
-def get_db_config(config: dict | None = None) -> dict:
+def get_db_config() -> dict:
     """Gets database configuration, prioritizing provided config, then config.py."""
-    if config and config.get('MONGO_URI'):
+    if config.MONGO_URI:
         # Use provided config if available and has MONGO_URI
         return {
-            'MONGO_URI': config.get('MONGO_URI'),
-            'MONGO_DB_NAME': config.get('MONGO_DB_NAME', 'agentic_testing_ground')
+            'MONGO_URI': config.MONGO_URI,
+            'MONGO_DB_NAME': config.MONGO_DB_NAME,
+            'MONGO_USERNAME': config.MONGO_USERNAME,
+            'MONGO_PASSWORD': config.MONGO_PASSWORD,
+            'MONGO_HOST': config.MONGO_HOST,
+            'MONGO_PORT': config.MONGO_PORT
         }
     else:
         # Fallback to config.py if no config or MONGO_URI is provided
@@ -19,18 +24,26 @@ def get_db_config(config: dict | None = None) -> dict:
             import config as app_config
             return {
                 'MONGO_URI': app_config.MONGO_URI,
-                'MONGO_DB_NAME': app_config.MONGO_DB_NAME
+                'MONGO_DB_NAME': app_config.MONGO_DB_NAME,
+                'MONGO_USERNAME': app_config.MONGO_USERNAME,
+                'MONGO_PASSWORD': app_config.MONGO_PASSWORD,
+                'MONGO_HOST': app_config.MONGO_HOST,
+                'MONGO_PORT': app_config.MONGO_PORT
             }
         except ImportError:
             print("config.py not found. Using default MongoDB URI and DB name.")
             return {
                 'MONGO_URI': 'mongodb://localhost:27017/',
-                'MONGO_DB_NAME': 'agentic_testing_ground'
+                'MONGO_DB_NAME': 'agentic_testing_ground',
+                'MONGO_USERNAME': '',
+                'MONGO_PASSWORD': '',
+                'MONGO_HOST': 'localhost',
+                'MONGO_PORT': 27017
             }
 
-async def initialize_database(config: dict | None = None):
+async def initialize_database():
     """Initializes the database connection and ensures collections exist."""
-    db_config = get_db_config(config)
+    db_config = get_db_config()
     db_client = DatabaseClient(db_config)
     try:
         await db_client.connect()
