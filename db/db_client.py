@@ -78,7 +78,7 @@ class DatabaseClient:
     async def get_attack_data(self, attack_id: str) -> Optional[AttackData]:
         """Retrieves a single attack data record by its ID."""
         print(f"Attempting to get attack data with attack_id: {attack_id}")
-        attack_data = await self.db.get_collection('attack_prompts').find_one({{"_id": ObjectId(attack_id)}})
+        attack_data = await self.db.get_collection('attack_prompts').find_one({"_id": ObjectId(attack_id)})
         if attack_data:
             print(f"Found attack data: {attack_data.get('_id')}")
             return AttackData(**attack_data)
@@ -87,8 +87,8 @@ class DatabaseClient:
 
     async def get_attack_data_for_run(self, run_id: str) -> List[AttackData]:
         """Retrieves all attack data records for a given run_id."""
-        attack_data_list = await self.db.get_collection('attack_prompts').find({{"run_id": run_id}}).to_list(length=None)
-        return [AttackData(**data) for data in attack_data_list]
+        attack_data_list = await self.db.get_collection('attack_prompts').find({"run_id": run_id}).to_list(length=None)
+        return [AttackData(**data, id=str(data.pop('_id'))) for data in attack_data_list]
 
     async def update_attack_data(self, attack_id: str, update_data: Dict[str, Any]) -> bool:
         """Updates an existing attack data record."""
@@ -122,17 +122,18 @@ class DatabaseClient:
 
     async def get_defense_data_for_run(self, run_id: str) -> List[DefenseData]:
         """Retrieves all defense data records for a given run_id."""
-        defense_data_list = await self.db.get_collection('defense_responses').find({{"run_id": run_id}}).to_list(length=None)
-        return [DefenseData(**data) for data in defense_data_list]
+        defense_data_list = await self.db.get_collection('defense_responses').find({"run_id": run_id}).to_list(length=None)
+        return [
+            DefenseData(**{**data, "_id": str(data["_id"])})
+            for data in defense_data_list
+        ]
 
     async def update_defense_data(self, defense_id: str, update_data: Dict[str, Any]) -> bool:
         """Updates an existing defense data record."""
-        print(f"Attempting to update defense data {defense_id} with data: {update_data}")
-        result = await self.db.get_collection('defense_responses').update_one({{"_id": ObjectId(defense_id)}}, {{"$set": update_data}})
-        if result.modified_count > 0:
-            print(f"Defense data {defense_id} updated successfully.")
-        else:
-            print(f"Defense data {defense_id} not found or no changes made.")
+        result = await self.db.get_collection('defense_responses').update_one(
+            {"_id": ObjectId(defense_id)},
+            {"$set": update_data}
+        )
         return result.modified_count > 0
 
     async def create_evaluation_data(self, run_id: str, evaluation_data: EvaluationData) -> str:
@@ -157,33 +158,35 @@ class DatabaseClient:
 
     async def get_evaluation_data_for_run(self, run_id: str) -> List[EvaluationData]:
         """Retrieves all evaluation data records for a given run_id."""
-        evaluation_data_list = await self.db.get_collection('evaluation_results').find({{"run_id": run_id}}).to_list(length=None)
-        return [EvaluationData(**data) for data in evaluation_data_list]
+        evaluation_data_list = await self.db.get_collection('evaluation_results').find({"run_id": run_id}).to_list(length=None)
+        return [
+            EvaluationData(**{**data, "_id": str(data["_id"])})
+            for data in evaluation_data_list
+        ]
 
     async def update_evaluation_data(self, evaluation_id: str, update_data: Dict[str, Any]) -> bool:
         """Updates an existing evaluation data record."""
-        print(f"Attempting to update evaluation data {evaluation_id} with data: {update_data}")
-        result = await self.db.get_collection('evaluation_results').update_one({{"_id": ObjectId(evaluation_id)}}, {{"$set": update_data}})
-        if result.modified_count > 0:
-            print(f"Evaluation data {evaluation_id} updated successfully.")
-        else:
-            print(f"Evaluation data {evaluation_id} not found or no changes made.")
+        result = await self.db.get_collection('evaluation_results').update_one(
+            {"_id": ObjectId(evaluation_id)},
+            {"$set": update_data}
+        )
         return result.modified_count > 0
 
     async def save_run_references(self, run_id: str, attack_ids: List[str], defense_ids: List[str], evaluation_ids: List[str]):
         """Updates the RunInDB document with references to the stored data."""
         print(f"Attempting to save references for run {run_id}: attack_ids={attack_ids}, defense_ids={defense_ids}, evaluation_ids={evaluation_ids}")
-        update_data = {
-            "attack_store_ref": attack_ids, # Assuming these are IDs, adjust if they are collection names or other refs
-            "defense_store_ref": defense_ids,
-            "evaluation_store_ref": evaluation_ids,
-            "updated_at": datetime.utcnow()
-        }
-        result = await self.db.get_collection('runs').update_one({{"run_id": run_id}}, {{"$set": update_data}})
-        if result.modified_count > 0:
-            print(f"Run references for {run_id} updated successfully.")
-        else:
-            print(f"Run {run_id} not found for reference update or no changes made.")
+        await self.db.get_collection('runs').update_one(
+            {"run_id": run_id},
+            {
+                "$set": {
+                    "attack_store_ref": attack_ids, # Assuming these are IDs or references
+                    "defense_store_ref": defense_ids,
+                    "evaluation_store_ref": evaluation_ids
+                }
+            },
+            upsert=True
+        )
+        print(f"Run references for {run_id} updated successfully.")
 
     async def get_runs(self) -> List[Run]:
         """Retrieves all runs from the database."""

@@ -216,7 +216,10 @@ async def test_websocket_connection(run_id: str):
 async def main():
     # Test the run lifecycle
     created_run = await test_create_run()
+    print(f"Type of run_id returned by test_create_run: {type(created_run.get('run_id'))}")
     run_id = created_run.get("run_id") if created_run else None
+    if run_id and isinstance(run_id, dict):
+        run_id = run_id.get('run_id') # Ensure run_id is a string
 
     if run_id:
         await test_get_runs()

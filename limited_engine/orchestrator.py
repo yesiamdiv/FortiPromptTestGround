@@ -170,7 +170,7 @@ class LimitedOrchestrator:
             if not existing_run_db_data:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
 
-            existing_run_db = DBRunInDB(**existing_run_db_data)
+            existing_run_db = existing_run_db_data # It's already a DBRunInDB object or similar structure
             
             # Update the attack_config within the run's config
             existing_run_db.config.attack_config = config.dict()
@@ -304,7 +304,10 @@ class LimitedOrchestrator:
             if not run_db_data:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
 
-            run_db = DBRunInDB(**run_db_data) # Convert to DBRunInDB
+            run_db_data = await self.db_client.get_run(runId)
+            if not run_db_data:
+                raise HTTPException(status_code=404, detail=f"Run with id {runId} not found")
+            run_db = DBRunInDB(**run_db_data.dict()) # Convert to DBRunInDB
             run_db.status = "paused"
             run_db.updated_at = datetime.datetime.utcnow()
             await self.db_client.update_run(runId, run_db.dict(by_alias=True))
