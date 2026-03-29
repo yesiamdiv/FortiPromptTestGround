@@ -185,7 +185,7 @@ class LimitedOrchestrator:
             self.test_case_generator.n = config.iterations
             self.test_case_generator.domain = config.domain
             self.test_case_generator.engine = config.parameters.get("engine", "ollama")
-            self.test_case_generator.model = config.parameters.get("model", "dolphin-mistral:7b-v2.6")
+            self.test_case_generator.ollama_model = config.model # Correctly setting the ollama_model from attack_config.model
             self.test_case_generator.seed = self.run_counter # Use run_counter for varied seeds
 
             return config
@@ -231,8 +231,9 @@ class LimitedOrchestrator:
             self.test_case_generator.n = attack_config.iterations
             self.test_case_generator.domain = attack_config.domain
             self.test_case_generator.engine = attack_config.parameters.get("engine", "ollama")
-            self.test_case_generator.model = attack_config.parameters.get("model", "dolphin-mistral:7b-v2.6")
+            self.test_case_generator.ollama_model = attack_config.model # Correctly setting the ollama_model from attack_config.model
             self.test_case_generator.seed = self.run_counter # Use run_counter for varied seeds
+            self.test_case_generator.output_dir = f"./output/{runId}" # Set output directory per run
             self.test_case_generator.run_id = runId # Set the run_id
 
             # Start the generation process on a separate thread
@@ -250,7 +251,7 @@ class LimitedOrchestrator:
             self.test_case_generator.n = attack_config.iterations
             self.test_case_generator.domain = attack_config.domain
             self.test_case_generator.engine = attack_config.parameters.get("engine", "ollama")
-            self.test_case_generator.model = attack_config.parameters.get("model", "dolphin-mistral:7b-v2.6")
+            self.test_case_generator.ollama_model = attack_config.model # Correctly setting the ollama_model from attack_config.model
             self.test_case_generator.seed = self.run_counter # Use run_counter for varied seeds
 
             # Generate prompts

@@ -53,6 +53,7 @@ class TestCaseGenerator:
         api_gateway: APIGateway = None,
     ):
         self.api_gateway = api_gateway
+        self.run_id = None # Initialize run_id here
         self.n = n
         self.domain = domain
         self.seed = seed
@@ -73,16 +74,15 @@ class TestCaseGenerator:
 
        
         self.engine = engine
-        self.model = None
-        self.llm = OllamaEngine(model=ollama_model or "dolphin-mistral:7b-v2.6")
+        self.ollama_model = ollama_model
+        self.llm = OllamaEngine(model=self.ollama_model or "dolphin-mistral:7b-v2.6")
         self.output_dir = output_dir
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
         if paraphrase:
             if engine == "ollama":
   
-                self.llm = OllamaEngine(model=ollama_model or "dolphin-mistral:7b-v2.6")
-                self.model = self.llm.model
+                self.llm = OllamaEngine(model=self.ollama_model or "dolphin-mistral:7b-v2.6")
             else:
                 raise ValueError(f"unknown engine '{engine}'")
 

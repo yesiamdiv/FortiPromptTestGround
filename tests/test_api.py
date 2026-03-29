@@ -112,7 +112,7 @@ async def test_attack_config(run_id: str):
         "domain": "data_exfiltration",
         "modelUrl": "https://api.anthropic.com/v1/messages",
         "iterations": 15,
-        "parameters": {"temperature": 0.7}
+        "parameters": {"temperature": 0.7, "engine": "ollama"} # Added engine here
     }
     try:
         async with httpx.AsyncClient() as client:
