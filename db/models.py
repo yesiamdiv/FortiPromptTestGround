@@ -14,19 +14,19 @@ from bson import ObjectId
 # --- Data Models ---
 
 class AttackData(BaseModel):
-    id: Optional[str] = Field(alias="_id") # MongoDB's _id
+    # id: Optional[str] = Field(alias="_id") # MongoDB's _id
     index: int
     prompt: str
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 class DefenseData(BaseModel):
-    id: Optional[str] = Field(alias="_id") # MongoDB's _id
+    # id: Optional[str] = Field(alias="_id") # MongoDB's _id
     index: int
     response: str
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 class EvaluationData(BaseModel):
-    id: Optional[str] = Field(alias="_id") # MongoDB's _id
+    # id: Optional[str] = Field(alias="_id") # MongoDB's _id
     index: int
     score: float
     feedback: Optional[str] = None

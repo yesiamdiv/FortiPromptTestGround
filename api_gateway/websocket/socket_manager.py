@@ -9,7 +9,7 @@ class SocketIOManager:
         self.room_sids: Dict[str, List[str]] = {}
 
     async def join_room(self, sid: str, room: str):
-        self.sio.enter_room(sid, room)
+        await self.sio.enter_room(sid, room)
         if room not in self.room_sids:
             self.room_sids[room] = []
         self.room_sids[room].append(sid)
@@ -32,6 +32,10 @@ class SocketIOManager:
         print(f"Broadcasting event '{event_name}' to room '{room}' with data: {data}")
         await self.sio.emit(event_name, data, room=room)
 
+    async def send_attack_event_to_frontend(self, run_id: str, event_name: str, data: Dict[str, Any]):
+        """Broadcasts attack-related events to the frontend."""
+        await self.broadcast_to_room(room=run_id, event_name=event_name, data=data)
+
     async def send_prompt_to_frontend(self, run_id: str, prompt: str):
         """Sends a prompt to the frontend via Socket.IO."""
         print(f"Sending prompt to frontend for run {run_id}")
@@ -40,12 +44,12 @@ class SocketIOManager:
     def get_connected_sids_in_room(self, room: str) -> List[str]:
         return self.room_sids.get(room, [])
 
-    def remove_sid_from_all_rooms(self, sid: str):
+    async def remove_sid_from_all_rooms(self, sid: str):
         # Iterate through all rooms and remove the sid if present
         for room in list(self.room_sids.keys()): # Iterate on a copy as dict might change during iteration
             if sid in self.room_sids[room]:
                 self.room_sids[room].remove(sid)
-                self.sio.leave_room(sid, room)
+                await self.sio.leave_room(sid, room)
                 if not self.room_sids[room]:
                     del self.room_sids[room]
         print(f"Client {sid} removed from all rooms.")

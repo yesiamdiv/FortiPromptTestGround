@@ -93,7 +93,7 @@ class DatabaseClient:
     async def update_attack_data(self, attack_id: str, update_data: Dict[str, Any]) -> bool:
         """Updates an existing attack data record."""
         print(f"Attempting to update attack data {attack_id} with data: {update_data}")
-        result = await self.db.get_collection('attack_prompts').update_one({{"_id": ObjectId(attack_id)}}, {{"$set": update_data}})
+        result = await self.db.get_collection('attack_prompts').update_one({"_id": ObjectId(attack_id)}, {"$set": update_data})
         if result.modified_count > 0:
             print(f"Attack data {attack_id} updated successfully.")
         else:
@@ -113,7 +113,7 @@ class DatabaseClient:
     async def get_defense_data(self, defense_id: str) -> Optional[DefenseData]:
         """Retrieves a single defense data record by its ID."""
         print(f"Attempting to get defense data with defense_id: {defense_id}")
-        defense_data = await self.db.get_collection('defense_responses').find_one({{"_id": ObjectId(defense_id)}})
+        defense_data = await self.db.get_collection('defense_responses').find_one({"_id": ObjectId(defense_id)})
         if defense_data:
             print(f"Found defense data: {defense_data.get('_id')}")
             return DefenseData(**defense_data)
@@ -149,7 +149,7 @@ class DatabaseClient:
     async def get_evaluation_data(self, evaluation_id: str) -> Optional[EvaluationData]:
         """Retrieves a single evaluation data record by its ID."""
         print(f"Attempting to get evaluation data with evaluation_id: {evaluation_id}")
-        evaluation_data = await self.db.get_collection('evaluation_results').find_one({{"_id": ObjectId(evaluation_id)}})
+        evaluation_data = await self.db.get_collection('evaluation_results').find_one({"_id": ObjectId(evaluation_id)})
         if evaluation_data:
             print(f"Found evaluation data: {evaluation_data.get('_id')}")
             return EvaluationData(**evaluation_data)
@@ -172,48 +172,27 @@ class DatabaseClient:
         )
         return result.modified_count > 0
 
-    async def save_run_references(self, run_id: str, attack_ids: List[str], defense_ids: List[str], evaluation_ids: List[str]):
-        """Updates the RunInDB document with references to the stored data."""
-        print(f"Attempting to save references for run {run_id}: attack_ids={attack_ids}, defense_ids={defense_ids}, evaluation_ids={evaluation_ids}")
-        await self.db.get_collection('runs').update_one(
-            {"run_id": run_id},
-            {
-                "$set": {
-                    "attack_store_ref": attack_ids, # Assuming these are IDs or references
-                    "defense_store_ref": defense_ids,
-                    "evaluation_store_ref": evaluation_ids
-                }
-            },
-            upsert=True
-        )
-        print(f"Run references for {run_id} updated successfully.")
+    # --- Run CRUD Operations ---
 
-    async def get_runs(self) -> List[Run]:
+    async def create_run(self, run: RunInDB) -> str:
+        """Creates a new run document in the database."""
+        run_dict = run.dict(by_alias=True)
+        
+        # Ensure timestamps are set
+        if 'created_at' not in run_dict or run_dict['created_at'] is None:
+            run_dict['created_at'] = datetime.utcnow()
+        if 'updated_at' not in run_dict or run_dict['updated_at'] is None:
+            run_dict['updated_at'] = datetime.utcnow()
+        
+        print(f"Attempting to create run with data: {run_dict}")
+        result = await self.db.get_collection('runs').insert_one(run_dict)
+        print(f"Run inserted with ID: {result.inserted_id}")
+        return str(result.inserted_id)
+
+    async def get_runs(self) -> List[RunInDB]:
         """Retrieves all runs from the database."""
         runs_data = await self.db.get_collection('runs').find().to_list(length=None)
         return [RunInDB(**run) for run in runs_data]
-    
-    async def create_run(self, run_data: Dict[str, Any]) -> str:
-        """Creates a new run document in the database."""
-        run_id = run_data.get('run_id')
-        if not run_id:
-            raise ValueError("run_id is required")
-
-        # Ensure the run_id is unique before inserting
-        existing_run = await self.db.get_collection('runs').find_one({"run_id": run_id})
-        if existing_run:
-            raise ValueError(f"Run with id {run_id} already exists")
-
-        # Convert run_data to RunInDB model and add timestamps
-        if '_id' not in run_data:
-            run_data['_id'] = None # Or handle this case as an error if _id is always expected
-        run_in_db = RunInDB(
-            **run_data,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
-        )
-        result = await self.db.get_collection('runs').insert_one(run_in_db.dict())
-        return str(result.inserted_id)
 
     async def get_run(self, run_id: str) -> Optional[RunInDB]:
         """Retrieves a single run by its ID."""

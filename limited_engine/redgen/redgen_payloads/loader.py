@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 
+# Import the new template application function
+from .templates import apply_template_by_name
 
 def get_available_domains() -> list:
     """
@@ -97,56 +99,28 @@ def load_templates() -> list:
     -------
     list : list of template dictionaries
     """
-    from . import templates as templates_module
+    # This function would now be much simpler, just returning metadata
+    # about available templates, not the functions themselves.
+    # The actual template application happens elsewhere using apply_template_by_name.
     
-    # Get all template functions - exclude type annotations and non-callables
-    template_functions = []
-    for name, obj in vars(templates_module).items():
-        # Skip private items, type annotations, utility functions, and non-callables
-        if (name.startswith('_') or 
-            name in ['Optional', 'Dict', 'Callable', 'get_templates', 'apply_template'] or
-            not callable(obj) or
-            hasattr(obj, '__module__') and obj.__module__ != 'redgen.redgen_payloads.templates'):
-            continue
-        template_functions.append((name, obj))
+    # Example: Return a list of template names and their descriptions
+    # This part would need to be adjusted based on how you want to expose
+    # available templates from loader.py.
+    
+    # For now, let's assume we want to list the names of all available templates
+    # from the TEMPLATE_MAP in templates.py
+    from .templates import TEMPLATE_MAP
     
     template_list = []
-    
-    for idx, (name, func) in enumerate(template_functions):
+    for name, func in TEMPLATE_MAP.items():
         template_list.append({
-            "id": f"template_{idx}",
+            "id": f"template_{name}", # Use name for ID for simplicity
             "name": name,
-            "text": None,  # Will be filled by the function
-            "func": func,
+            "text": None,  # Text is generated dynamically
+            "func": None,  # Function reference is not needed here anymore
             "severity": 5,
             "attack_type": "template_usage",
             "generation_mode": "original",
         })
     
     return template_list
-
-
-def apply_template(template_dict: dict, payload_text: str) -> str:
-    """
-    Apply a template to a payload by calling the template function.
-    
-    Parameters
-    ----------
-    template_dict : dict
-        Template dictionary with 'func' key
-    payload_text : str
-        The payload/behavior text to wrap
-    
-    Returns
-    -------
-    str : rendered prompt
-    """
-    if "func" not in template_dict:
-        return payload_text
-    
-    template_func = template_dict["func"]
-    try:
-        return template_func(payload_text)
-    except Exception as e:
-        print(f"Warning: Failed to apply template {template_dict.get('name', '?')}: {e}")
-        return payload_text

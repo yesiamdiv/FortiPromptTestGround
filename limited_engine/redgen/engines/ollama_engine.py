@@ -74,6 +74,8 @@ class OllamaEngine:
                     input=payload,
                     capture_output=True,
                     text=True,
+                    encoding='utf-8', # Explicitly set encoding to UTF-8
+                    errors='replace', # Replace undecodable characters
                     timeout=self.timeout,
                 )
 
