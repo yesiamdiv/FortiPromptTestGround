@@ -1,22 +1,40 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 import socketio
 from socketio.asgi import ASGIApp
-from typing import Dict, Any
 
 from api_gateway.websocket.socket_manager import SocketIOManager
-
 from .routes import test
 from db.db_client import DatabaseClient
 
+
 class APIGateway:
     def __init__(self, db_client: DatabaseClient):
+        # ✅ Create FastAPI app
         self.app = FastAPI()
-        self.sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
+
+        # ✅ FIX: Add CORS middleware (THIS WAS MISSING)
+        self.app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["http://localhost:3000"],  # frontend URL
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+        # ✅ Socket.IO setup (already correct)
+        self.sio = socketio.AsyncServer(
+            async_mode="asgi",
+            cors_allowed_origins="*"
+        )
+
+        # Combine FastAPI + Socket.IO
         self.sio_app = ASGIApp(self.sio, self.app)
+
         self.socket_manager = SocketIOManager(self.sio)
         self.db_client = db_client
 
+        # Register routes and events
         self._register_http_routes()
         self._register_socketio_events()
 
@@ -24,7 +42,7 @@ class APIGateway:
         return self.db_client
 
     def _register_http_routes(self):
-        # self.app.include_router(config.router, prefix="/api")
+        # API routes
         self.app.include_router(test.router, prefix="/api")
 
         @self.app.get("/")

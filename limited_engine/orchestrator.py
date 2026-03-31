@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, status
 from api_gateway import APIGateway
 from db import DatabaseClient
 # Import API schemas
-from api_gateway.schemas import RunCreateRequest, RunResponse, AttackConfig, DefenseConfig 
+from api_gateway.schemas import AttackPrompt, AttackStats, RunCreateRequest, RunResponse, AttackConfig, DefenseConfig, RunUpdateRequest, StartAttackResponse, StopAttackResponse 
 # Import DB models
 from db.models import Run as DBRun, RunInDB as DBRunInDB, AttackData, RunConfig # Import necessary schemas
 from datetime import datetime, timezone
@@ -50,7 +50,9 @@ class LimitedOrchestrator:
             return [RunResponse(
                 run_id=run.run_id,
                 name=run.name,
+                description=run.description,
                 status=run.status,
+                components=run.components,
                 config=run.config.dict() if hasattr(run.config, 'dict') else run.config,
                 created_at=run.created_at,
                 updated_at=run.updated_at
@@ -71,13 +73,15 @@ class LimitedOrchestrator:
             new_run = DBRunInDB(
                 run_id=run_id,
                 name=run_data.name,
-                status="initialized", # Default status
+                status="initialized",
+                description=run_data.description or "",
+                components=run_data.components or [],
                 config=RunConfig(
                     global_config={},
                     attack_config={},
                     defense_config={},
                     evaluation_config={}
-                ), # Initialize with empty configs
+                ),
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc)
             )
@@ -94,52 +98,98 @@ class LimitedOrchestrator:
                 run_id=new_run.run_id,
                 name=new_run.name,
                 status=new_run.status,
+                description=new_run.description or "",
+                components=new_run.components or [],
                 config=new_run.config.dict(),
                 created_at=new_run.created_at,
                 updated_at=new_run.updated_at
             )
 
+        # @self.api_gateway.app.patch("/api/runs/{runId}", response_model=RunResponse)
+        # async def update_run(runId: str, run_update: RunUpdateRequest):
+        #     """
+        #     Update run fields (status, name, etc.)
+        #     For config updates, use specific config endpoints instead.
+        #     """
+        #     # Fetch the existing run from DB
+        #     existing_run_db = await self.db_client.get_run(runId)
+        #     if not existing_run_db:
+        #         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+
+        #     # Update only top-level fields (status, name, etc.)
+        #     # Don't update config here - use specific endpoints for that
+        #     allowed_fields = ['status', 'name']
+        #     for key, value in run_update.items():
+        #         if key in allowed_fields and hasattr(existing_run_db, key):
+        #             setattr(existing_run_db, key, value)
+
+        #     existing_run_db.updated_at = datetime.now(timezone.utc)
+
+        #     # Update the run in the database
+        #     updated = await self.db_client.update_run(runId, existing_run_db.dict(by_alias=True))
+        #     if not updated:
+        #         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update run")
+
+        #     # Fetch the updated run to return
+        #     updated_run_in_db = await self.db_client.get_run(runId)
+        #     if not updated_run_in_db:
+        #          raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found after update")
+            
+        #     print(f"✅ Updated run: {runId} - Status: {updated_run_in_db.status}")
+            
+        #     # Map DBRunInDB model to RunResponse for API response
+        #     return RunResponse(
+        #         run_id=updated_run_in_db.run_id,
+        #         name=updated_run_in_db.name,
+        #         status=updated_run_in_db.status,
+        #         description=updated_run_in_db.description,
+        #         components=updated_run_in_db.components,
+        #         config=updated_run_in_db.config.dict() if hasattr(updated_run_in_db.config, 'dict') else updated_run_in_db.config,
+        #         created_at=updated_run_in_db.created_at,
+        #         updated_at=updated_run_in_db.updated_at
+        #     )
+
         @self.api_gateway.app.patch("/api/runs/{runId}", response_model=RunResponse)
-        async def update_run(runId: str, run_update: Dict[str, Any]):
+        async def update_run(runId: str, run_update: RunUpdateRequest):
             """
-            Update run fields (status, name, etc.)
+            Update run fields (status, name, description).
             For config updates, use specific config endpoints instead.
             """
-            # Fetch the existing run from DB
             existing_run_db = await self.db_client.get_run(runId)
             if not existing_run_db:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
 
-            # Update only top-level fields (status, name, etc.)
-            # Don't update config here - use specific endpoints for that
-            allowed_fields = ['status', 'name']
-            for key, value in run_update.items():
-                if key in allowed_fields and hasattr(existing_run_db, key):
+            # Extract only provided fields
+            update_data = run_update.dict(exclude_unset=True)
+
+            # Apply updates safely
+            for key, value in update_data.items():
+                if hasattr(existing_run_db, key):
                     setattr(existing_run_db, key, value)
 
             existing_run_db.updated_at = datetime.now(timezone.utc)
 
-            # Update the run in the database
+            # Save to DB
             updated = await self.db_client.update_run(runId, existing_run_db.dict(by_alias=True))
             if not updated:
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update run")
 
-            # Fetch the updated run to return
-            updated_run_in_db = await self.db_client.get_run(runId)
-            if not updated_run_in_db:
-                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found after update")
-            
-            print(f"✅ Updated run: {runId} - Status: {updated_run_in_db.status}")
-            
-            # Map DBRunInDB model to RunResponse for API response
+            # Fetch updated run
+            updated_run = await self.db_client.get_run(runId)
+            if not updated_run:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found after update")
+
             return RunResponse(
-                run_id=updated_run_in_db.run_id,
-                name=updated_run_in_db.name,
-                status=updated_run_in_db.status,
-                config=updated_run_in_db.config.dict() if hasattr(updated_run_in_db.config, 'dict') else updated_run_in_db.config,
-                created_at=updated_run_in_db.created_at,
-                updated_at=updated_run_in_db.updated_at
+                run_id=updated_run.run_id,
+                name=updated_run.name,
+                status=updated_run.status,
+                description=updated_run.description or "",
+                components=updated_run.components or [],
+                config=updated_run.config.dict() if hasattr(updated_run.config, 'dict') else updated_run.config,
+                created_at=updated_run.created_at,
+                updated_at=updated_run.updated_at
             )
+
 
         @self.api_gateway.app.delete("/api/runs/{runId}", status_code=status.HTTP_204_NO_CONTENT)
         async def delete_run(runId: str):
@@ -188,8 +238,10 @@ class LimitedOrchestrator:
             Update attack configuration for a run.
             This is called AFTER run creation to set up attack parameters.
             """
+            print('RUN_ID : ',runId)
             run_db = await self.db_client.get_run(runId)
             if not run_db:
+                print('\n\n',run_db,'\n\n')
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
 
             # Update the attack_config
@@ -226,42 +278,86 @@ class LimitedOrchestrator:
 
             return config_data
 
-        @self.api_gateway.app.get("/api/runs/{runId}/attack/prompts", response_model=List[Dict[str, Any]])
+        # @self.api_gateway.app.get("/api/runs/{runId}/attack/prompts", response_model=List[Dict[str, Any]])
+        # async def get_attack_prompts(runId: str):
+        #     """Get all attack prompts for a run"""
+        #     run_db = await self.db_client.get_run(runId)
+        #     if not run_db:
+        #         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+            
+        #     # Get all attack data for the run
+        #     attack_data_list = await self.db_client.get_attack_data_for_run(runId)
+        #     return [attack.dict() for attack in attack_data_list]
+
+
+        @self.api_gateway.app.get(
+            "/api/runs/{runId}/attack/prompts",
+            response_model=List[AttackPrompt]
+        )
         async def get_attack_prompts(runId: str):
             """Get all attack prompts for a run"""
             run_db = await self.db_client.get_run(runId)
             if not run_db:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
-            
-            # Get all attack data for the run
-            attack_data_list = await self.db_client.get_attack_data_for_run(runId)
-            return [attack.dict() for attack in attack_data_list]
 
-        @self.api_gateway.app.get("/api/runs/{runId}/attack/stats", response_model=Dict[str, Any])
+            attack_data_list = await self.db_client.get_attack_data_for_run(runId)
+
+            return [
+                AttackPrompt(
+                    promptId=f"prompt-{attack.index}",
+                    content=attack.prompt,
+                    status="generated",  # You can enhance this later
+                    timestamp=datetime.now(timezone.utc).isoformat() + "Z"
+                )
+                for attack in attack_data_list
+            ]
+        
+        
+        # @self.api_gateway.app.get("/api/runs/{runId}/attack/stats", response_model=Dict[str, Any])
+        # async def get_attack_stats(runId: str):
+        #     """Get attack statistics for a run"""
+        #     run_db = await self.db_client.get_run(runId)
+        #     if not run_db:
+        #         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+            
+        #     # Get all attack data for the run to calculate stats
+        #     attack_data_list = await self.db_client.get_attack_data_for_run(runId)
+        #     total_prompts = len(attack_data_list)
+            
+        #     # Calculate more detailed stats
+        #     stats = {
+        #         "totalPrompts": total_prompts,
+        #         "pendingAttacks": 0,
+        #         "attacksGenerated": total_prompts
+        #     }
+            
+        #     return stats
+
+        @self.api_gateway.app.get(
+            "/api/runs/{runId}/attack/stats",
+            response_model=AttackStats
+        )
         async def get_attack_stats(runId: str):
             """Get attack statistics for a run"""
             run_db = await self.db_client.get_run(runId)
             if not run_db:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
-            
-            # Get all attack data for the run to calculate stats
+
             attack_data_list = await self.db_client.get_attack_data_for_run(runId)
             total_prompts = len(attack_data_list)
-            
-            # Calculate more detailed stats
-            stats = {
-                "totalPrompts": total_prompts,
-                "pendingAttacks": 0,
-                "attacksGenerated": total_prompts
-            }
-            
-            return stats
+
+            return AttackStats(
+                totalPrompts=total_prompts,
+                pendingAttacks=0,  # can improve later
+                attacksGenerated=total_prompts
+            )
+
 
         # ==========================================
         # ATTACK CONTROL ROUTES
         # ==========================================
         
-        @self.api_gateway.app.post("/api/runs/{runId}/attack/start", response_model=Dict[str, str])
+        @self.api_gateway.app.post("/api/runs/{runId}/attack/start",response_model=StartAttackResponse)
         async def start_attack_generation(runId: str, payload: Dict[str, bool]):
             """
             Start attack generation for a run.
@@ -320,10 +416,16 @@ class LimitedOrchestrator:
 
             print("\n\nSTARED GENREATION THREAD SENDING RESPONSE")
 
-            return {"message": "Attack generation started in background.", "status": "running"}
+            return StartAttackResponse(
+                message="Attack generation started in background.",
+                runId=runId,
+                status="running"
+            )
+        
 
-        @self.api_gateway.app.post("/api/runs/{runId}/attack/stop", response_model=Dict[str, str])
+        @self.api_gateway.app.post("/api/runs/{runId}/attack/stop",response_model=StopAttackResponse)
         async def stop_attack_generation(runId: str):
+
             """Stop attack generation for a run"""
             run_db = await self.db_client.get_run(runId)
             if not run_db:
