@@ -17,7 +17,7 @@ Install ollama from https://ollama.ai and run ``ollama pull llama3.1:latest``
 
 import subprocess
 import time
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 # reuse the same system prompt from groq_engine so the two engines behave
 # similarly.  importing would create a circular import, so just duplicate it
@@ -28,6 +28,9 @@ PARAPHRASE_SYSTEM = (
     "no explanations, no preamble, no quotes."
 )
 
+SYSTEM_PROMPT = ( "You are a helpful AI assistant. "
+    "Given the following conversation history, generate the next response. "
+)
 
 class OllamaEngine:
     def __init__(
@@ -72,6 +75,46 @@ class OllamaEngine:
                 proc = subprocess.run(
                     ["ollama", "run", self.model, "-"],
                     input=payload,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8', # Explicitly set encoding to UTF-8
+                    errors='replace', # Replace undecodable characters
+                    timeout=self.timeout,
+                )
+
+                if proc.returncode != 0:
+                    raise RuntimeError(f"non-zero exit code: {proc.returncode} {proc.stderr}")
+
+                result = proc.stdout.strip()
+                if result:
+                    return result
+            except Exception as e:
+                wait = 2 ** attempt
+                print(
+                    f"[OllamaEngine] Attempt {attempt+1} failed: {e}. "
+                    f"Retrying in {wait}s..."
+                )
+                time.sleep(wait)
+        return None
+
+    async def generate_response(self, chat_history: List[Dict[str, Any]], retries: int = 3) -> Optional[str]:
+        """
+        Generates a response based on the chat history.
+        Formats the history into a prompt and calls the LLM.
+        """
+        # Format chat history into a single string prompt
+        # This is a simple approach; more complex prompt engineering might be needed
+        formatted_history = "\n".join([f"{msg['role']}: {msg['content']}" for msg in chat_history])
+
+        # Prepend the system prompt
+        prompt = SYSTEM_PROMPT + "\n\n" + formatted_history
+
+        for attempt in range(retries):
+            try:
+                self._rate_limit()
+                proc = subprocess.run(
+                    ["ollama", "run", self.model, "-"],
+                    input=prompt,
                     capture_output=True,
                     text=True,
                     encoding='utf-8', # Explicitly set encoding to UTF-8

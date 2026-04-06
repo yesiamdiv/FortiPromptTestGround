@@ -9,6 +9,7 @@ from bson import ObjectId
 
 # Import Pydantic models from schemas.py
 from .models import Run, RunInDB, AttackData, DefenseData, EvaluationData, RunConfig
+from .manual_models import ManualRunInDB, ChatSession, ChatTurn
 
 class DatabaseClient:
     def __init__(self,config):
@@ -219,133 +220,113 @@ class DatabaseClient:
             print("MongoDB connection closed.")
 
  
-    # async def create_run(self, run_data: Dict[str, Any]) -> str:
-    #     """Creates a new run document in the database."""
-    #     run_id = run_data.get('run_id')
-    #     if not run_id:
-    #         raise ValueError("run_id is required")
+    # ── Collection helpers ────────────────────────────────────────────────────
 
-    #     # Ensure the run_id is unique before inserting
-    #     existing_run = await self.runs_collection.find_one({{"run_id": run_id}})
-    #     if existing_run:
-    #         raise ValueError(f"Run with id {run_id} already exists")
+    def _manual_runs_col(self):
+        return self.db.get_collection("manual_runs")
 
-    #     result = await self.runs_collection.insert_one(run_data)
-    #     return str(result.inserted_id)
+    def _manual_sessions_col(self):
+        return self.db.get_collection("manual_sessions")
 
-    # async def get_run(self, run_id: str) -> Optional[Run]:
-    #     """Retrieves a single run by its ID."""
-    #     run_data = await self.runs_collection.find_one({{"run_id": run_id}})
-    #     if run_data:
-    #         return Run(**run_data)
-    #     return None
+    # ── Manual Run CRUD ───────────────────────────────────────────────────────
 
-    # async def get_runs(self) -> List[Run]:
-    #     """Retrieves all runs from the database."""
-    #     runs_data = await self.runs_collection.find().to_list(length=None)
-    #     return [Run(**run) for run in runs_data]
+    async def create_manual_run(self, manual_run: ManualRunInDB) -> str:
+        """Insert a new ManualRunInDB document. Returns run_id."""
+        doc = manual_run.dict()
+        await self._manual_runs_col().insert_one(doc)
+        print(f"[DB] Created manual run: {manual_run.run_id}")
+        return manual_run.run_id
 
-    # async def update_run(self, run_id: str, update_data: Dict[str, Any]) -> bool:
-    #     """Updates an existing run document."""
-    #     result = await self.runs_collection.update_one({{"run_id": run_id}}, {{"\$set": update_data}})
-    #     return result.modified_count > 0
+    async def get_manual_run(self, run_id: str) -> Optional[ManualRunInDB]:
+        """Fetch manual run by run_id."""
+        doc = await self._manual_runs_col().find_one({"run_id": run_id})
+        if doc:
+            doc.pop("_id", None)
+            return ManualRunInDB(**doc)
+        return None
 
-    # async def delete_run(self, run_id: str) -> bool:
-    #     """Deletes a run document by its ID."""
-    #     result = await self.runs_collection.delete_one({{"run_id": run_id}})
-    #     return result.deleted_count > 0
+    async def update_manual_run(self, run_id: str, update: Dict[str, Any]) -> bool:
+        """Partial update on a manual run document."""
+        update["updated_at"] = datetime.utcnow()
+        result = await self._manual_runs_col().update_one(
+            {"run_id": run_id}, {"$set": update}
+        )
+        return result.modified_count > 0
 
-    # async def save_arena_state(self, run_id: str, state: ArenaState):
-    #     """Saves or updates the ArenaState for a given run_id."""
-    #     # We can use update_one with upsert=True to either insert a new state or update an existing one
-    #     await self.runs_collection.update_one(
-    #         {{"run_id": run_id}},
-    #         {{"\$set": state.dict()}},
-    #         upsert=True
-    #     )
+    # ── Chat Session CRUD ─────────────────────────────────────────────────────
 
-    # async def get_arena_state(self, run_id: str) -> Optional[ArenaState]:
-    #     """Retrieves the ArenaState for a given run_id."""
-    #     run_data = await self.runs_collection.find_one({{"run_id": run_id}})
-    #     if run_data:
-    #         return ArenaState(**run_data)
-    #     return None
+    async def create_chat_session(self, session: ChatSession) -> str:
+        """Insert a new ChatSession document. Returns session_id."""
+        doc = session.dict()
+        await self._manual_sessions_col().insert_one(doc)
+        # Also push session_id into the manual_run's sessions list
+        await self._manual_runs_col().update_one(
+            {"run_id": session.run_id},
+            {"$addToSet": {"sessions": session.session_id},
+             "$set": {"updated_at": datetime.utcnow()}}
+        )
+        print(f"[DB] Created chat session: {session.session_id} for run: {session.run_id}")
+        return session.session_id
 
-    # async def create_attack_prompt(self, prompt_data: Dict[str, Any]) -> str:
-    #     """Creates a new attack prompt document in the database."""
-    #     result = await self.attack_prompts_collection.insert_one(prompt_data)
-    #     return str(result.inserted_id)
+    async def get_chat_session(self, session_id: str) -> Optional[ChatSession]:
+        """Fetch a single ChatSession by session_id."""
+        doc = await self._manual_sessions_col().find_one({"session_id": session_id})
+        if doc:
+            doc.pop("_id", None)
+            return ChatSession(**doc)
+        return None
 
-    # async def get_attack_prompt(self, prompt_id: str) -> Optional[Dict[str, Any]]:
-    #     """Retrieves a single attack prompt by its ID."""
-    #     prompt_data = await self.attack_prompts_collection.find_one({{"_id": ObjectId(prompt_id)}})
-    #     return prompt_data
+    async def get_sessions_for_run(self, run_id: str) -> List[ChatSession]:
+        """Fetch all ChatSession documents for a run, newest first."""
+        cursor = self._manual_sessions_col().find(
+            {"run_id": run_id}
+        ).sort("created_at", -1)
+        docs = await cursor.to_list(length=None)
+        sessions = []
+        for doc in docs:
+            doc.pop("_id", None)
+            sessions.append(ChatSession(**doc))
+        return sessions
 
-    # async def update_attack_prompt(self, prompt_id: str, update_data: Dict[str, Any]) -> bool:
-    #     """Updates an existing attack prompt document."""
-    #     result = await self.attack_prompts_collection.update_one({{"_id": ObjectId(prompt_id)}}, {{"\$set": update_data}})
-    #     return result.modified_count > 0
+    async def append_turn_to_session(self, session_id: str, turn: ChatTurn) -> bool:
+        """Push a single ChatTurn into the session's turns array."""
+        result = await self._manual_sessions_col().update_one(
+            {"session_id": session_id},
+            {"$push": {"turns": turn.dict()}}
+        )
+        return result.modified_count > 0
 
-    # async def delete_attack_prompt(self, prompt_id: str) -> bool:
-    #     """Deletes an attack prompt document by its ID."""
-    #     result = await self.attack_prompts_collection.delete_one({{"_id": ObjectId(prompt_id)}})
-    #     return result.deleted_count > 0
+    async def update_chat_session(self, session_id: str, update: Dict[str, Any]) -> bool:
+        """Partial update on a chat session document."""
+        result = await self._manual_sessions_col().update_one(
+            {"session_id": session_id}, {"$set": update}
+        )
+        return result.modified_count > 0
 
-    # async def create_defense_response(self, response_data: Dict[str, Any]) -> str:
-    #     """Creates a new defense response document in the database."""
-    #     result = await self.defense_responses_collection.insert_one(response_data)
-    #     return str(result.inserted_id)
-
-    # async def get_defense_response(self, response_id: str) -> Optional[Dict[str, Any]]:
-    #     """Retrieves a single defense response by its ID."""
-    #     response_data = await self.defense_responses_collection.find_one({{"_id": ObjectId(response_id)}})
-    #     return response_data
-
-    # async def update_defense_response(self, response_id: str, update_data: Dict[str, Any]) -> bool:
-    #     """Updates an existing defense response document."""
-    #     result = await self.defense_responses_collection.update_one({{"_id": ObjectId(response_id)}}, {{"\$set": update_data}})
-    #     return result.modified_count > 0
-
-    # async def delete_defense_response(self, response_id: str) -> bool:
-    #     """Deletes a defense response document by its ID."""
-    #     result = await self.defense_responses_collection.delete_one({{"_id": ObjectId(response_id)}})
-    #     return result.deleted_count > 0
-
-    # async def create_evaluation_result(self, result_data: Dict[str, Any]) -> str:
-    #     """Creates a new evaluation result document in the database."""
-    #     result = await self.evaluation_results_collection.insert_one(result_data)
-    #     return str(result.inserted_id)
-
-    # async def get_evaluation_result(self, result_id: str) -> Optional[Dict[str, Any]]:
-    #     """Retrieves a single evaluation result by its ID."""
-    #     result_data = await self.evaluation_results_collection.find_one({{"_id": ObjectId(result_id)}})
-    #     return result_data
-
-    # async def update_evaluation_result(self, result_id: str, update_data: Dict[str, Any]) -> bool:
-    #     """Updates an existing evaluation result document."""
-    #     result = await self.evaluation_results_collection.update_one({{"_id": ObjectId(result_id)}}, {{"\$set": update_data}})
-    #     return result.modified_count > 0
-
-    # async def delete_evaluation_result(self, result_id: str) -> bool:
-    #     """Deletes an evaluation result document by its ID."""
-    #     result = await self.evaluation_results_collection.delete_one({{"_id": ObjectId(result_id)}})
-    #     return result.deleted_count > 0
-
-    # async def save_prompt(self, run_id: str, prompt: str, metadata: dict):
-    #     """Saves a prompt for a run to the database."""
-    #     prompt_data = {
-    #         "run_id": run_id,
-    #         "prompt": prompt,
-    #         "metadata": metadata,
-    #         "timestamp": datetime.utcnow()
-    #     }
-    #     try:
-    #         # Use insert_one to save the prompt data
-    #         # Note: This is a synchronous call. For async operations, use await self.prompts_collection.insert_one(prompt_data)
-    #         # However, since this method is not async, we'll use the synchronous API.
-    #         # If the orchestrator is running async, this might need adjustment.
-    #         await self.prompts_collection.insert_one(prompt_data)
-    #         print(f"Prompt saved successfully for run {run_id}.")
-    #     except Exception as e:
-    #         print(f"Error saving prompt for run {run_id}: {e}")
-
+    async def save_and_evaluate_session(
+        self,
+        session_id: str,
+        evaluation_score: float,
+        evaluation_label: str,
+        evaluation_reasoning: str,
+        label: Optional[str] = None,
+    ) -> bool:
+        """
+        Marks a session as saved + evaluated in a single atomic update.
+        Called after the user clicks 'Save Session'.
+        """
+        now = datetime.utcnow()
+        update: Dict[str, Any] = {
+            "status": "evaluated",
+            "saved_at": now,
+            "evaluated_at": now,
+            "evaluation_score": evaluation_score,
+            "evaluation_label": evaluation_label,
+            "evaluation_reasoning": evaluation_reasoning,
+        }
+        if label is not None:
+            update["label"] = label
+        result = await self._manual_sessions_col().update_one(
+            {"session_id": session_id}, {"$set": update}
+        )
+        return result.modified_count > 0
