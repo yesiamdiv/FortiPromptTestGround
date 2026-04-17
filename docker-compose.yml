@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:7.0
+    container_name: adversarial-mongo
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=adversarial_testing
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - adversarial-network
+
+  # Redis Cache (Optional)
+  redis:
+    image: redis:7-alpine
+    container_name: adversarial-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - adversarial-network
+
+  # Ollama (Local LLM)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: adversarial-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - adversarial-network
+    # Uncomment for GPU support
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # FastAPI Server (when implemented)
+  # api:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: adversarial-api
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     - MONGODB_URL=mongodb://mongodb:27017
+  #     - REDIS_URL=redis://redis:6379
+  #     - OLLAMA_BASE_URL=http://ollama:11434
+  #   env_file:
+  #     - .env
+  #   depends_on:
+  #     - mongodb
+  #     - redis
+  #     - ollama
+  #   volumes:
+  #     - ./:/app
+  #   networks:
+  #     - adversarial-network
+  #   command: uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  mongodb_data:
+    driver: local
+  redis_data:
+    driver: local
+  ollama_data:
+    driver: local
+
+networks:
+  adversarial-network:
+    driver: bridge
