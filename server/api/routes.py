@@ -2,9 +2,10 @@
 API Routes
 
 FastAPI routes for the adversarial testing engine.
+Uses Socket.IO for WebSocket communication.
 """
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from typing import List
 from datetime import datetime
 
@@ -19,7 +20,6 @@ from server.api.schemas import (
     ErrorResponse
 )
 from server.database.connection import get_db
-from server.websocket.manager import get_ws_manager
 from engine.workflow_engine import WorkflowEngine
 from strategies.default_strategy import DefaultStrategy
 
@@ -99,7 +99,7 @@ async def create_run(request: CreateRunRequest, background_tasks: BackgroundTask
             run_id=run_id,
             status="running",
             message="Run started successfully",
-            websocket_url=f"/ws/{run_id}"
+            websocket_url="/socket.io"  # Socket.IO endpoint, not run-specific
         )
         
     except Exception as e:
@@ -126,7 +126,7 @@ async def get_run(run_id: str):
 
 @router.get("/runs/{run_id}/steps", response_model=List[StepResponse])
 async def get_run_steps(run_id: str):
-    """Get all steps for a run"""
+    """Get all steps for a run (legacy - use specific endpoints instead)"""
     db = get_db()
     if not db:
         raise HTTPException(status_code=500, detail="Database not connected")
@@ -136,7 +136,7 @@ async def get_run_steps(run_id: str):
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     
-    # Get steps
+    # Get steps (if using old schema)
     steps_cursor = db.steps.find({"run_id": run_id}).sort("timestamp", 1)
     steps = await steps_cursor.to_list(length=None)
     
@@ -145,6 +145,97 @@ async def get_run_steps(run_id: str):
         step.pop("_id", None)
     
     return [StepResponse(**step) for step in steps]
+
+
+@router.get("/runs/{run_id}/attacks")
+async def get_run_attacks(run_id: str):
+    """Get all attacks for a run"""
+    db = get_db()
+    if not db:
+        raise HTTPException(status_code=500, detail="Database not connected")
+    
+    from server.database.operations import get_db_ops
+    db_ops = get_db_ops(db)
+    
+    # Verify run exists
+    run = await db_ops.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    
+    attacks = await db_ops.get_attacks(run_id)
+    return attacks
+
+
+@router.get("/runs/{run_id}/defences")
+async def get_run_defences(run_id: str):
+    """Get all defences for a run"""
+    db = get_db()
+    if not db:
+        raise HTTPException(status_code=500, detail="Database not connected")
+    
+    from server.database.operations import get_db_ops
+    db_ops = get_db_ops(db)
+    
+    # Verify run exists
+    run = await db_ops.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    
+    defences = await db_ops.get_defences(run_id)
+    return defences
+
+
+@router.get("/runs/{run_id}/evaluations")
+async def get_run_evaluations(run_id: str):
+    """Get all evaluations for a run"""
+    db = get_db()
+    if not db:
+        raise HTTPException(status_code=500, detail="Database not connected")
+    
+    from server.database.operations import get_db_ops
+    db_ops = get_db_ops(db)
+    
+    # Verify run exists
+    run = await db_ops.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    
+    evaluations = await db_ops.get_evaluations(run_id)
+    return evaluations
+
+
+@router.get("/runs/{run_id}/data")
+async def get_run_with_data(run_id: str):
+    """Get run with all associated data (attacks, defences, evaluations)"""
+    db = get_db()
+    if not db:
+        raise HTTPException(status_code=500, detail="Database not connected")
+    
+    from server.database.operations import get_db_ops
+    db_ops = get_db_ops(db)
+    
+    data = await db_ops.get_run_with_data(run_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Run not found")
+    
+    return data
+
+
+@router.get("/runs/{run_id}/statistics")
+async def get_run_statistics(run_id: str):
+    """Get computed statistics for a run"""
+    db = get_db()
+    if not db:
+        raise HTTPException(status_code=500, detail="Database not connected")
+    
+    from server.database.operations import get_db_ops
+    db_ops = get_db_ops(db)
+    
+    stats = await db_ops.get_run_statistics(run_id)
+    if not stats:
+        raise HTTPException(status_code=404, detail="Run not found or no statistics available")
+    
+    return stats
 
 
 @router.get("/runs", response_model=List[RunResponse])
@@ -216,30 +307,42 @@ async def health_check():
 
 
 # ============================================================================
-# WebSocket Route
+# Socket.IO Connection Info
 # ============================================================================
 
-@router.websocket("/ws/{run_id}")
-async def websocket_endpoint(websocket: WebSocket, run_id: str):
+@router.get("/socket-io/info")
+async def socket_io_info():
     """
-    WebSocket endpoint for real-time run updates.
+    Get Socket.IO connection information.
     
-    Clients connect to this endpoint to receive live updates as a run progresses.
+    Clients should connect to /socket.io (not this API endpoint).
     """
-    ws_manager = get_ws_manager()
-    
-    await ws_manager.connect(websocket, run_id)
-    
-    try:
-        # Keep connection alive and handle client messages
-        while True:
-            data = await websocket.receive_text()
-            
-            # Echo back for debugging (can be removed)
-            await websocket.send_json({
-                "type": "echo",
-                "data": data
-            })
-            
-    except WebSocketDisconnect:
-        ws_manager.disconnect(websocket)
+    return {
+        "socket_io_path": "/socket.io",
+        "events": {
+            "client_to_server": [
+                "connect",
+                "disconnect",
+                "join_run_room",
+                "leave_run_room",
+                "ping"
+            ],
+            "server_to_client": [
+                "connected",
+                "room_joined",
+                "room_left",
+                "run_started",
+                "attack_generated",
+                "defence_response",
+                "evaluation_complete",
+                "turn_completed",
+                "run_progress",
+                "run_completed",
+                "run_error",
+                "pong"
+            ]
+        },
+        "example_usage": {
+            "javascript": "const socket = io('http://localhost:8000', {path: '/socket.io'}); socket.emit('join_run_room', {run_id: 'run_abc123'});"
+        }
+    }
