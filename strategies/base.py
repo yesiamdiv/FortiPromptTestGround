@@ -17,8 +17,20 @@ class AttackStrategy(ABC):
         raise NotImplementedError
     
     @abstractmethod
-    def execute_generation(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate next attack - called by AttackNode"""
+    async def execute_generation(self, state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Generate next attack - called by AttackNode.
+        
+        Strategy has full control over LLM calls and data processing.
+        Can make multiple LLM calls, process data, etc.
+        
+        Args:
+            state: Current system state
+            config: Runtime configuration
+        
+        Returns:
+            Dictionary with updated current_turn and strategy_context
+        """
         raise NotImplementedError
     
     @abstractmethod
