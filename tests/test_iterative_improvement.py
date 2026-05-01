@@ -10,7 +10,7 @@ from engine.workflow_engine import WorkflowEngine
 from engine.graph_builder import UniversalGraphBuilder
 from strategies.iterative_improvement_strategy import IterativeImprovementStrategy
 from providers.ollama_provider import OllamaProvider
-from nodes.strategy_driven_attack_node import StrategyDrivenAttackNode
+from nodes.strategy_attack_node import StrategyDrivenAttackNode
 from nodes.default_nodes import (
     DefaultInitNode,
     DefaultDefenceNode,
@@ -38,7 +38,7 @@ async def test_iterative_improvement():
     # 1. Create LLM provider
     print("📡 Connecting to Ollama...")
     provider = OllamaProvider({
-        "model": "llama3",
+        "model": "dolphin-mistral:7b-v2.6",
         "base_url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         "temperature": 0.9,
         "max_tokens": 500

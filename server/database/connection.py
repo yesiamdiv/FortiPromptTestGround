@@ -32,8 +32,8 @@ class DatabaseConnection:
             return cls._db
         
         # Get connection details from env if not provided
-        mongo_url = mongo_url or os.getenv("MONGODB_URL", "mongodb://localhost:27017")
-        database_name = database_name or os.getenv("MONGODB_DATABASE", "adversarial_testing")
+        mongo_url = mongo_url or os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+        database_name = database_name or os.getenv("MONGO_DB_NAME", "adversarial_testing")
         
         # Create client
         cls._client = AsyncIOMotorClient(mongo_url)
@@ -94,7 +94,7 @@ class DatabaseConnection:
 
 
 # Convenience function for getting database
-async def init_db(mongo_url: str = None, database_name: str = None) -> AsyncIOMotorDatabase:
+async def init_db(mongo_uri: str = None, database_name: str = None) -> AsyncIOMotorDatabase:
     """
     Initialize and return database connection.
     
@@ -105,7 +105,7 @@ async def init_db(mongo_url: str = None, database_name: str = None) -> AsyncIOMo
     Returns:
         Database instance
     """
-    return await DatabaseConnection.connect(mongo_url, database_name)
+    return await DatabaseConnection.connect(mongo_uri, database_name)
 
 
 def get_db() -> Optional[AsyncIOMotorDatabase]:

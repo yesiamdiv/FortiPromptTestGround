@@ -1,11 +1,10 @@
 """
-API Routes
+API Routes - Updated
 
-FastAPI routes for the adversarial testing engine.
-Uses Socket.IO for WebSocket communication.
+FastAPI routes with separated run creation and execution.
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException
 from typing import List
 from datetime import datetime
 
@@ -20,28 +19,10 @@ from server.api.schemas import (
     ErrorResponse
 )
 from server.database.connection import get_db
-from engine.workflow_engine import WorkflowEngine
-from strategies.default_strategy import DefaultStrategy
+from server.run_manager import get_run_manager
 
 
 router = APIRouter()
-
-
-# Global engine instance (will be injected on startup)
-_engine: WorkflowEngine = None
-
-
-def set_engine(engine: WorkflowEngine):
-    """Set the global engine instance"""
-    global _engine
-    _engine = engine
-
-
-def get_engine() -> WorkflowEngine:
-    """Get the global engine instance"""
-    if _engine is None:
-        raise HTTPException(status_code=500, detail="Engine not initialized")
-    return _engine
 
 
 # ============================================================================
@@ -49,59 +30,164 @@ def get_engine() -> WorkflowEngine:
 # ============================================================================
 
 @router.post("/runs/create", response_model=CreateRunResponse)
-async def create_run(request: CreateRunRequest, background_tasks: BackgroundTasks):
+async def create_run(request: CreateRunRequest):
     """
-    Create and start a new adversarial run.
+    Create a new adversarial run (database record only).
     
-    The run executes in the background, and updates are sent via WebSocket.
+    The run is created in 'idle' status and must be started separately via /runs/{runId}/start
     """
     try:
-        engine = get_engine()
+        import uuid
         
-        # Create strategy instance
-        # TODO: Support multiple strategies via registry
-        if request.strategy == "default":
-            strategy = DefaultStrategy(request.strategy_config)
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unknown strategy: {request.strategy}"
-            )
+        run_manager = get_run_manager()
         
-        # Prepare initial payload
-        initial_payload = {
+        # Generate run ID
+        run_id = f"run_{uuid.uuid4().hex[:12]}"
+        
+        # Prepare run data
+        run_data = {
+            "name": request.intent[:50] if request.intent else f"Run {run_id[:8]}",
+            "description": request.description or "",
+            "strategy": request.strategy,
             "intent": request.intent,
             "target": request.target,
             "user_id": request.user_id,
             "session_id": request.session_id,
             "tags": request.tags,
-            "description": request.description
+            "components": [],
+            "config": {
+                "global_config": {},
+                "attack_config": {},
+                "defence_config": {},
+                "evaluation_config": {},
+                "strategy_config": request.strategy_config
+            }
         }
         
-        # Generate run ID
-        import uuid
-        run_id = f"run_{uuid.uuid4().hex[:12]}"
-        
-        # Start run in background
-        async def run_in_background():
-            try:
-                await engine.execute_run(
-                    initial_payload=initial_payload,
-                    strategy=strategy,
-                    run_id=run_id
-                )
-            except Exception as e:
-                print(f"Background run error: {e}")
-        
-        background_tasks.add_task(run_in_background)
+        # Create run in database
+        run = await run_manager.create_run(run_id, run_data)
         
         return CreateRunResponse(
             run_id=run_id,
-            status="running",
-            message="Run started successfully",
-            websocket_url="/socket.io"  # Socket.IO endpoint, not run-specific
+            status="idle",
+            message="Run created successfully. Use /runs/{runId}/start to begin execution.",
+            websocket_url="/socket.io"
         )
         
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/runs/{run_id}/start")
+async def start_run(run_id: str):
+    """
+    Start execution of an existing run.
+    
+    The run must be in 'idle' status.
+    """
+    try:
+        run_manager = get_run_manager()
+        
+        # Get run from database
+        db = get_db()
+        if not db:
+            raise HTTPException(status_code=500, detail="Database not connected")
+        
+        from server.database.operations import get_db_ops
+        db_ops = get_db_ops(db)
+        
+        run = await db_ops.get_run(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+        
+        if run["status"] not in ["idle", "stopped"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Run cannot be started from status: {run['status']}"
+            )
+        
+        # Prepare initial payload
+        initial_payload = {
+            "intent": run.get("intent", ""),
+            "target": run.get("target"),
+            "user_id": run.get("user_id"),
+            "session_id": run.get("session_id"),
+            "tags": run.get("tags", []),
+            "description": run.get("description", "")
+        }
+        
+        # Get strategy config
+        strategy_config = run.get("config", {}).get("strategy_config", {})
+        
+        # Start run
+        result = await run_manager.start_run(
+            run_id=run_id,
+            strategy_name=run["strategy"],
+            strategy_config=strategy_config,
+            initial_payload=initial_payload
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/runs/{run_id}/pause")
+async def pause_run(run_id: str):
+    """
+    Pause a running test run.
+    """
+    try:
+        run_manager = get_run_manager()
+        result = await run_manager.pause_run(run_id)
+        
+        return result
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/runs/{run_id}/resume")
+async def resume_run(run_id: str):
+    """
+    Resume a paused test run.
+    """
+    try:
+        run_manager = get_run_manager()
+        result = await run_manager.resume_run(run_id)
+        
+        return result
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/runs/{run_id}/stop")
+async def stop_run(run_id: str):
+    """
+    Stop a running test run.
+    """
+    try:
+        run_manager = get_run_manager()
+        result = await run_manager.stop_run(run_id)
+        
+        return result
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -124,27 +210,68 @@ async def get_run(run_id: str):
     return RunResponse(**run)
 
 
-@router.get("/runs/{run_id}/steps", response_model=List[StepResponse])
-async def get_run_steps(run_id: str):
-    """Get all steps for a run (legacy - use specific endpoints instead)"""
+@router.patch("/runs/{run_id}", response_model=RunResponse)
+async def update_run(run_id: str, updates: dict):
+    """Update run metadata"""
     db = get_db()
     if not db:
         raise HTTPException(status_code=500, detail="Database not connected")
     
-    # Verify run exists
-    run = await db.runs.find_one({"run_id": run_id})
-    if not run:
+    from server.database.operations import get_db_ops
+    db_ops = get_db_ops(db)
+    
+    # Don't allow updating status directly - use lifecycle endpoints
+    if "status" in updates:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot update status directly. Use /runs/{run_id}/start|pause|stop"
+        )
+    
+    success = await db_ops.update_run(run_id, updates)
+    if not success:
         raise HTTPException(status_code=404, detail="Run not found")
     
-    # Get steps (if using old schema)
-    steps_cursor = db.steps.find({"run_id": run_id}).sort("timestamp", 1)
-    steps = await steps_cursor.to_list(length=None)
+    run = await db_ops.get_run(run_id)
+    return RunResponse(**run)
+
+
+@router.delete("/runs/{run_id}")
+async def delete_run(run_id: str):
+    """Delete a run"""
+    db = get_db()
+    if not db:
+        raise HTTPException(status_code=500, detail="Database not connected")
     
-    # Remove MongoDB _id fields
-    for step in steps:
-        step.pop("_id", None)
+    # Stop run if active
+    run_manager = get_run_manager()
+    try:
+        await run_manager.stop_run(run_id)
+    except:
+        pass  # Run might not be active
     
-    return [StepResponse(**step) for step in steps]
+    # Delete from database
+    result = await db.runs.delete_one({"run_id": run_id})
+    
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Run not found")
+    
+    # Also delete associated data
+    await db.attacks.delete_many({"run_id": run_id})
+    await db.defences.delete_many({"run_id": run_id})
+    await db.evaluations.delete_many({"run_id": run_id})
+    
+    return {"message": "Run deleted successfully"}
+
+
+@router.get("/runs/{run_id}/status")
+async def get_run_status(run_id: str):
+    """Get current run status"""
+    try:
+        run_manager = get_run_manager()
+        status = await run_manager.get_run_status(run_id)
+        return status
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @router.get("/runs/{run_id}/attacks")
@@ -295,14 +422,14 @@ async def list_strategies():
 async def health_check():
     """Health check endpoint"""
     db = get_db()
-    engine = get_engine()
+    run_manager = get_run_manager()
     
     return HealthResponse(
         status="healthy",
         timestamp=datetime.utcnow().isoformat(),
         version="1.0.0",
         database_connected=db is not None,
-        active_runs=len(engine.list_active_runs()) if engine else 0
+        active_runs=len(run_manager.get_active_runs())
     )
 
 
@@ -346,3 +473,4 @@ async def socket_io_info():
             "javascript": "const socket = io('http://localhost:8000', {path: '/socket.io'}); socket.emit('join_run_room', {run_id: 'run_abc123'});"
         }
     }
+
