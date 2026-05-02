@@ -1,3 +1,4 @@
+
 """Default Node Implementations"""
 
 from typing import Dict, Any
@@ -11,6 +12,26 @@ class DefaultInitNode(StrategyProxyNode):
     """Delegates to strategy.setup()"""
     def get_strategy_method(self) -> str:
         return "setup"
+
+    async def execute(self, state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute the init node by delegating to strategy setup.
+        This ensures the strategy context is properly initialized.
+        """
+        # Strategy setup might modify the state, so we pass it through.
+        # The strategy's setup method should return the modified state.
+        # We assume strategy.setup returns state updates relevant to strategy context.
+        strategy = config["configurable"]["strategy"]
+        strategy_setup_result = strategy.setup(state.get("initial_payload", {{}}))
+        
+        # Merge strategy context updates into the main state.
+        # Ensure state has strategy_context initialized.
+        updated_state = state.copy()
+        updated_state["strategy_context"] = strategy_setup_result.get("strategy_context", {{}})
+        updated_state["routing_signal"] = strategy_setup_result.get("routing_signal", state.get("routing_signal"))
+        
+        print(f"Init Node: Strategy setup complete. Context: {updated_state.get('strategy_context')}")
+        return updated_state
 
 
 class DefaultAttackNode(StrategyProxyNode):
@@ -29,7 +50,7 @@ class DefaultDefenceNode(BaseAdversarialNode):
         super().__init__(default_config)
     
     async def execute(self, state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
-        current_turn = state.get("current_turn", {})
+        current_turn = state.get("current_turn", {{}})
         is_blocked = random.random() < self.config.get("block_rate", 0.3)
         
         if is_blocked:
@@ -69,7 +90,7 @@ class DefaultEvalNode(BaseAdversarialNode):
         super().__init__(default_config)
     
     async def execute(self, state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
-        current_turn = state.get("current_turn", {})
+        current_turn = state.get("current_turn", {{}})
         defence = current_turn.get("defence")
         
         was_blocked = defence.was_blocked() if defence else False
@@ -102,9 +123,9 @@ def create_default_nodes(config: Dict[str, Any] = None) -> Dict[str, BaseAdversa
     """Create a complete set of default nodes"""
     node_config = config or {}
     return {
-        "init": DefaultInitNode(node_config.get("init", {})),
-        "attack": DefaultAttackNode(node_config.get("attack", {})),
-        "defence": DefaultDefenceNode(node_config.get("defence", {})),
-        "eval": DefaultEvalNode(node_config.get("eval", {})),
-        "router": DefaultRouterNode(node_config.get("router", {}))
+        "init": DefaultInitNode(node_config.get("init", {{}})),
+        "attack": DefaultAttackNode(node_config.get("attack", {{}})),
+        "defence": DefaultDefenceNode(node_config.get("defence", {{}})),
+        "eval": DefaultEvalNode(node_config.get("eval", {{}})),
+        "router": DefaultRouterNode(node_config.get("router", {{}})
     }
