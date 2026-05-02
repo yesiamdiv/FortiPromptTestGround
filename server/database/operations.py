@@ -1,9 +1,6 @@
+
 """
 Database Operations
-
-CRUD operations for separate collections (attacks, defences, evaluations, runs).
-
-This module contains the actual database logic that middlewares call.
 """
 
 from typing import Dict, Any, List, Optional
@@ -16,6 +13,7 @@ from server.database.models_v2 import (
     EvaluationData,
     RunStatistics
 )
+from server.config.models import GraphConfig # Import GraphConfig for type hinting and Pydantic parsing
 
 
 class DatabaseOperations:
@@ -47,16 +45,21 @@ class DatabaseOperations:
         Create a new run document.
         
         Args:
-            run_data: Run data dictionary
+            run_data: Run data dictionary. Must include 'run_id', 'strategy', and 'graph_config'.
         
         Returns:
             run_id of created run
         """
+        # Ensure graph_config is included in run_data and properly formatted
+        if 'graph_config' not in run_data:
+            raise ValueError("Graph configuration is missing in run_data.")
+        
         run_doc = {
             **run_data,
             "created_at": datetime.utcnow().isoformat(),
             "total_iterations": 0,
-            "successful_iterations": 0
+            "successful_iterations": 0,
+            "status": run_data.get("status", "idle") # Default status to idle if not provided
         }
         
         result = await self.runs.insert_one(run_doc)
@@ -70,7 +73,7 @@ class DatabaseOperations:
             run_id: Run identifier
         
         Returns:
-            Run document or None
+            Run document (as dict) or None. Pydantic parsing is done by the caller if needed.
         """
         run = await self.runs.find_one({"run_id": run_id})
         if run:
@@ -88,6 +91,10 @@ class DatabaseOperations:
         Returns:
             True if updated, False if not found
         """
+        # Ensure graph_config is not directly updated here if it's immutable after creation
+        # If updates contains graph_config, it should be handled carefully or disallowed.
+        # For now, we allow updates, but caller should be mindful.
+        
         result = await self.runs.update_one(
             {"run_id": run_id},
             {"$set": updates}

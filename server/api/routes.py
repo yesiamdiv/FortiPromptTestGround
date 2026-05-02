@@ -1,476 +1,299 @@
-"""
-API Routes - Updated
 
-FastAPI routes with separated run creation and execution.
+"""
+Refined WebSocket Events and API Workflow Considerations
+
+This file outlines the intended WebSocket events and API interactions for enhanced real-time feedback and manual session management.
 """
 
-from fastapi import APIRouter, HTTPException
-from typing import List
+import asyncio
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 
-from server.api.schemas import (
-    CreateRunRequest,
-    CreateRunResponse,
-    RunResponse,
-    StepResponse,
-    HealthResponse,
-    ListStrategiesResponse,
-    StrategyInfo,
-    ErrorResponse
-)
+from server.websocket.socketio_manager import SocketIOManager
+from server.database.manual_operations import get_manual_ops
 from server.database.connection import get_db
-from server.run_manager import get_run_manager
+from server.run_manager import RunExecutor, RunStatus
 
 
-router = APIRouter()
-
-
-# ============================================================================
-# Run Management Routes
-# ============================================================================
-
-@router.post("/runs/create", response_model=CreateRunResponse)
-async def create_run(request: CreateRunRequest):
-    """
-    Create a new adversarial run (database record only).
+async def emit_manual_wait_events(executor: RunExecutor, session_id: str, run_id: str):
+    """Emits WebSocket events when a run enters a manual wait state."""
+    socketio_manager = get_socketio_manager()
     
-    The run is created in 'idle' status and must be started separately via /runs/{runId}/start
-    """
-    try:
-        import uuid
-        
-        run_manager = get_run_manager()
-        
-        # Generate run ID
-        run_id = f"run_{uuid.uuid4().hex[:12]}"
-        
-        # Prepare run data
-        run_data = {
-            "name": request.intent[:50] if request.intent else f"Run {run_id[:8]}",
-            "description": request.description or "",
-            "strategy": request.strategy,
-            "intent": request.intent,
-            "target": request.target,
-            "user_id": request.user_id,
-            "session_id": request.session_id,
-            "tags": request.tags,
-            "components": [],
-            "config": {
-                "global_config": {},
-                "attack_config": {},
-                "defence_config": {},
-                "evaluation_config": {},
-                "strategy_config": request.strategy_config
-            }
+    if not socketio_manager:
+        print("Warning: Socket.IO manager not initialized. Cannot emit wait events.")
+        return
+
+    # Event indicating a manual input is required
+    await socketio_manager.broadcast_to_room(
+        run_id,
+        'manual_input_required',
+        {
+            'run_id': run_id,
+            'session_id': session_id,
+            'input_type': executor.current_state.get("manual_input_required", "unknown"),
+            'timeout_seconds': executor.graph_config.attack_node_config.max_attempts_per_turn, # Example: using a config value
+            'status': 'waiting'
         }
-        
-        # Create run in database
-        run = await run_manager.create_run(run_id, run_data)
-        
-        return CreateRunResponse(
-            run_id=run_id,
-            status="idle",
-            message="Run created successfully. Use /runs/{runId}/start to begin execution.",
-            websocket_url="/socket.io"
-        )
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    )
 
-
-@router.post("/runs/{run_id}/start")
-async def start_run(run_id: str):
-    """
-    Start execution of an existing run.
-    
-    The run must be in 'idle' status.
-    """
-    try:
-        run_manager = get_run_manager()
-        
-        # Get run from database
-        db = get_db()
-        if not db:
-            raise HTTPException(status_code=500, detail="Database not connected")
-        
-        from server.database.operations import get_db_ops
-        db_ops = get_db_ops(db)
-        
-        run = await db_ops.get_run(run_id)
-        if not run:
-            raise HTTPException(status_code=404, detail="Run not found")
-        
-        if run["status"] not in ["idle", "stopped"]:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Run cannot be started from status: {run['status']}"
-            )
-        
-        # Prepare initial payload
-        initial_payload = {
-            "intent": run.get("intent", ""),
-            "target": run.get("target"),
-            "user_id": run.get("user_id"),
-            "session_id": run.get("session_id"),
-            "tags": run.get("tags", []),
-            "description": run.get("description", "")
+    # Event indicating the run is paused specifically for input
+    await socketio_manager.broadcast_to_room(
+        run_id,
+        'run_paused_for_input',
+        {
+            'run_id': run_id,
+            'session_id': session_id,
+            'status': RunStatus.WAITING_INPUT.value
         }
-        
-        # Get strategy config
-        strategy_config = run.get("config", {}).get("strategy_config", {})
-        
-        # Start run
-        result = await run_manager.start_run(
-            run_id=run_id,
-            strategy_name=run["strategy"],
-            strategy_config=strategy_config,
-            initial_payload=initial_payload
-        )
-        
-        return result
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/runs/{run_id}/pause")
-async def pause_run(run_id: str):
-    """
-    Pause a running test run.
-    """
-    try:
-        run_manager = get_run_manager()
-        result = await run_manager.pause_run(run_id)
-        
-        return result
-        
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/runs/{run_id}/resume")
-async def resume_run(run_id: str):
-    """
-    Resume a paused test run.
-    """
-    try:
-        run_manager = get_run_manager()
-        result = await run_manager.resume_run(run_id)
-        
-        return result
-        
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/runs/{run_id}/stop")
-async def stop_run(run_id: str):
-    """
-    Stop a running test run.
-    """
-    try:
-        run_manager = get_run_manager()
-        result = await run_manager.stop_run(run_id)
-        
-        return result
-        
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/runs/{run_id}", response_model=RunResponse)
-async def get_run(run_id: str):
-    """Get details of a specific run"""
-    db = get_db()
-    if not db:
-        raise HTTPException(status_code=500, detail="Database not connected")
-    
-    run = await db.runs.find_one({"run_id": run_id})
-    
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
-    
-    # Remove MongoDB _id field
-    run.pop("_id", None)
-    
-    return RunResponse(**run)
-
-
-@router.patch("/runs/{run_id}", response_model=RunResponse)
-async def update_run(run_id: str, updates: dict):
-    """Update run metadata"""
-    db = get_db()
-    if not db:
-        raise HTTPException(status_code=500, detail="Database not connected")
-    
-    from server.database.operations import get_db_ops
-    db_ops = get_db_ops(db)
-    
-    # Don't allow updating status directly - use lifecycle endpoints
-    if "status" in updates:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot update status directly. Use /runs/{run_id}/start|pause|stop"
-        )
-    
-    success = await db_ops.update_run(run_id, updates)
-    if not success:
-        raise HTTPException(status_code=404, detail="Run not found")
-    
-    run = await db_ops.get_run(run_id)
-    return RunResponse(**run)
-
-
-@router.delete("/runs/{run_id}")
-async def delete_run(run_id: str):
-    """Delete a run"""
-    db = get_db()
-    if not db:
-        raise HTTPException(status_code=500, detail="Database not connected")
-    
-    # Stop run if active
-    run_manager = get_run_manager()
-    try:
-        await run_manager.stop_run(run_id)
-    except:
-        pass  # Run might not be active
-    
-    # Delete from database
-    result = await db.runs.delete_one({"run_id": run_id})
-    
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Run not found")
-    
-    # Also delete associated data
-    await db.attacks.delete_many({"run_id": run_id})
-    await db.defences.delete_many({"run_id": run_id})
-    await db.evaluations.delete_many({"run_id": run_id})
-    
-    return {"message": "Run deleted successfully"}
-
-
-@router.get("/runs/{run_id}/status")
-async def get_run_status(run_id: str):
-    """Get current run status"""
-    try:
-        run_manager = get_run_manager()
-        status = await run_manager.get_run_status(run_id)
-        return status
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-
-@router.get("/runs/{run_id}/attacks")
-async def get_run_attacks(run_id: str):
-    """Get all attacks for a run"""
-    db = get_db()
-    if not db:
-        raise HTTPException(status_code=500, detail="Database not connected")
-    
-    from server.database.operations import get_db_ops
-    db_ops = get_db_ops(db)
-    
-    # Verify run exists
-    run = await db_ops.get_run(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
-    
-    attacks = await db_ops.get_attacks(run_id)
-    return attacks
-
-
-@router.get("/runs/{run_id}/defences")
-async def get_run_defences(run_id: str):
-    """Get all defences for a run"""
-    db = get_db()
-    if not db:
-        raise HTTPException(status_code=500, detail="Database not connected")
-    
-    from server.database.operations import get_db_ops
-    db_ops = get_db_ops(db)
-    
-    # Verify run exists
-    run = await db_ops.get_run(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
-    
-    defences = await db_ops.get_defences(run_id)
-    return defences
-
-
-@router.get("/runs/{run_id}/evaluations")
-async def get_run_evaluations(run_id: str):
-    """Get all evaluations for a run"""
-    db = get_db()
-    if not db:
-        raise HTTPException(status_code=500, detail="Database not connected")
-    
-    from server.database.operations import get_db_ops
-    db_ops = get_db_ops(db)
-    
-    # Verify run exists
-    run = await db_ops.get_run(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
-    
-    evaluations = await db_ops.get_evaluations(run_id)
-    return evaluations
-
-
-@router.get("/runs/{run_id}/data")
-async def get_run_with_data(run_id: str):
-    """Get run with all associated data (attacks, defences, evaluations)"""
-    db = get_db()
-    if not db:
-        raise HTTPException(status_code=500, detail="Database not connected")
-    
-    from server.database.operations import get_db_ops
-    db_ops = get_db_ops(db)
-    
-    data = await db_ops.get_run_with_data(run_id)
-    if not data:
-        raise HTTPException(status_code=404, detail="Run not found")
-    
-    return data
-
-
-@router.get("/runs/{run_id}/statistics")
-async def get_run_statistics(run_id: str):
-    """Get computed statistics for a run"""
-    db = get_db()
-    if not db:
-        raise HTTPException(status_code=500, detail="Database not connected")
-    
-    from server.database.operations import get_db_ops
-    db_ops = get_db_ops(db)
-    
-    stats = await db_ops.get_run_statistics(run_id)
-    if not stats:
-        raise HTTPException(status_code=404, detail="Run not found or no statistics available")
-    
-    return stats
-
-
-@router.get("/runs", response_model=List[RunResponse])
-async def list_runs(
-    status: str = None,
-    limit: int = 100,
-    offset: int = 0
-):
-    """List all runs with optional filtering"""
-    db = get_db()
-    if not db:
-        raise HTTPException(status_code=500, detail="Database not connected")
-    
-    # Build query
-    query = {}
-    if status:
-        query["status"] = status
-    
-    # Get runs
-    runs_cursor = db.runs.find(query).sort("started_at", -1).skip(offset).limit(limit)
-    runs = await runs_cursor.to_list(length=limit)
-    
-    # Remove MongoDB _id fields
-    for run in runs:
-        run.pop("_id", None)
-    
-    return [RunResponse(**run) for run in runs]
-
-
-# ============================================================================
-# Strategy Management Routes
-# ============================================================================
-
-@router.get("/strategies", response_model=ListStrategiesResponse)
-async def list_strategies():
-    """List all available strategies"""
-    # TODO: Implement strategy registry
-    strategies = [
-        StrategyInfo(
-            name="default",
-            description="Default testing strategy with random attacks",
-            config_schema={
-                "max_attempts": "int - Maximum number of attack attempts",
-                "attack_prefix": "str - Prefix for generated attacks"
-            }
-        )
-    ]
-    
-    return ListStrategiesResponse(strategies=strategies)
-
-
-# ============================================================================
-# Health & Status Routes
-# ============================================================================
-
-@router.get("/health", response_model=HealthResponse)
-async def health_check():
-    """Health check endpoint"""
-    db = get_db()
-    run_manager = get_run_manager()
-    
-    return HealthResponse(
-        status="healthy",
-        timestamp=datetime.utcnow().isoformat(),
-        version="1.0.0",
-        database_connected=db is not None,
-        active_runs=len(run_manager.get_active_runs())
     )
 
 
-# ============================================================================
-# Socket.IO Connection Info
-# ============================================================================
+async def emit_resumption_event(run_id: str, session_id: str, turn_id: str):
+    """Emits WebSocket event when manual input is received and run resumes."""
+    socketio_manager = get_socketio_manager()
+    if not socketio_manager:
+        print("Warning: Socket.IO manager not initialized. Cannot emit resumption event.")
+        return
 
-@router.get("/socket-io/info")
-async def socket_io_info():
-    """
-    Get Socket.IO connection information.
-    
-    Clients should connect to /socket.io (not this API endpoint).
-    """
-    return {
-        "socket_io_path": "/socket.io",
-        "events": {
-            "client_to_server": [
-                "connect",
-                "disconnect",
-                "join_run_room",
-                "leave_run_room",
-                "ping"
-            ],
-            "server_to_client": [
-                "connected",
-                "room_joined",
-                "room_left",
-                "run_started",
-                "attack_generated",
-                "defence_response",
-                "evaluation_complete",
-                "turn_completed",
-                "run_progress",
-                "run_completed",
-                "run_error",
-                "pong"
-            ]
-        },
-        "example_usage": {
-            "javascript": "const socket = io('http://localhost:8000', {path: '/socket.io'}); socket.emit('join_run_room', {run_id: 'run_abc123'});"
+    await socketio_manager.broadcast_to_room(
+        run_id,
+        'manual_input_received',
+        {
+            'run_id': run_id,
+            'session_id': session_id,
+            'turn_id': turn_id, # The turn that received manual input
+            'status': 'processing' # Indicate that it's now processing
         }
+    )
+
+
+async def emit_turn_update_events(run_id: str, session_id: str, turn: Dict[str, Any], node_name: str):
+    """Emits WebSocket events for turn updates (attack, defense, eval)."""
+    socketio_manager = get_socketio_manager()
+    if not socketio_manager:
+        return
+
+    event_name = f"manual_{node_name}_update"
+    payload = {
+        'session_id': session_id,
+        'turn_id': turn.get("turn_id"),
+        'turn_index': turn.get("turn_index"),
+        'timestamp': turn.get("timestamp")
     }
+
+    if node_name == "attack":
+        payload.update({
+            'attack_prompt': turn.get("attack_prompt"),
+            'attack_metadata': turn.get("metadata", {{}})
+        })
+    elif node_name == "defence":
+        payload.update({
+            'defense_response': turn.get("defense_response"),
+            'was_blocked': turn.get("defense_was_blocked"),
+            'status_code': turn.get("defense_status_code"),
+            'defense_metadata': turn.get("defense_metadata", {{}})
+        })
+    elif node_name == "eval":
+        payload.update({
+            'score': turn.get("eval_score"),
+            'success': turn.get("eval_success"),
+            'category': turn.get("eval_category"),
+            'feedback': turn.get("eval_feedback", ""),
+            'eval_metadata': turn.get("metadata", {{}})
+        })
+    
+    await socketio_manager.broadcast_to_room(run_id, event_name, payload)
+
+
+# --- Refinements to RunExecutor and API Handlers ---
+
+# Modify RunExecutor to integrate WebSocket broadcasts for wait states
+# This requires accessing the executor from the API handler.
+
+async def refine_run_executor_for_websockets(executor: "RunExecutor", session_id: str):
+    """Inject WebSocket signaling logic into RunExecutor if needed, or ensure it picks up state changes.
+    
+    The current approach is that ManualAttackNode sets state flags, and RunExecutor monitors them.
+    The API then sets the event. WebSocket events should be broadcast when these state changes occur.
+    
+    We will adjust the `_handle_manual_wait` in RunExecutor to emit WebSocket events.
+    """
+    pass # Placeholder for potential direct injection or modification if needed.
+
+# We will modify RunExecutor directly to emit WebSocket events when entering/exiting wait states.
+
+
+
+# --- API Route Integration --- 
+# (These would typically be in server/api/routes.py or a dedicated manual_routes file)
+
+# Assume `router` is an APIRouter instance
+
+def integrate_manual_routes(router):
+    """Integrates manual session API routes into the main router.
+    This function would be called in server/main.py.
+    """
+    # Example: Importing and including routes from manual_routes.py
+    # from server.api.manual_routes import router as manual_router
+    # router.include_router(manual_router, prefix="/api/v1/runs")
+    
+    # For demonstration, adding the critical manual prompt endpoint here if it wasn't there.
+    # NOTE: This is illustrative. Actual integration should be in the main API setup.
+    
+    @router.post("/runs/{run_id}/manual-prompt", response_model=Dict[str, Any])
+    async def provide_manual_prompt(run_id: str, prompt_data: Dict[str, str]):
+        """
+        Endpoint to provide manual input (e.g., attack prompt) for a paused run.
+        This endpoint interacts with manual session management and signals the RunExecutor to resume.
+        """
+        try:
+            run_manager = get_run_manager()
+            executor = run_manager.executors.get(run_id)
+            
+            if not executor:
+                raise ValueError(f"Run executor not found for run_id: {run_id}")
+            
+            # Check if the run is indeed in a manual wait state
+            if not executor._manual_wait_active:
+                raise RuntimeError(f"Run {run_id} is not in a manual wait state.")
+            
+            manual_prompt = prompt_data.get("prompt")
+            if not manual_prompt:
+                raise ValueError("Manual prompt is required in the request body.")
+
+            session_id = executor.current_state.get("session_id")
+            if not session_id:
+                # Attempt to find an active session if not directly in state
+                db = get_db()
+                if db:
+                    manual_ops = get_manual_ops(db)
+                    sessions = await manual_ops.list_sessions(run_id, status='active', limit=1)
+                    if sessions:
+                        session_id = sessions[0]["session_id"]
+                    else:
+                        raise ValueError("No active manual session found to associate prompt with.")
+                else:
+                    raise RuntimeError("Database not connected. Cannot find active session.")
+            
+            # --- Use manual_ops to add the turn ---
+            turn_index = executor.current_state.get("turn_index", 0) # Get index from current state if available
+            turn_id = f"{session_id}_turn_{turn_index}"
+            
+            # Add the user's prompt as a new turn
+            await executor.manual_ops.add_turn(
+                session_id=session_id,
+                turn_id=turn_id,
+                turn_index=turn_index,
+                role="attacker",
+                attack_prompt=manual_prompt,
+                metadata={"status": "received_manual_input"}
+            )
+            
+            # --- Update Executor's internal state ---
+            updated_attack_payload = create_simple_attack(data=manual_prompt, metadata= {
+                "source": "manual_input",
+                "timestamp": datetime.utcnow().isoformat(),
+                "session_id": session_id,
+                "turn_id": turn_id
+            })
+            
+            if executor.current_state:
+                executor.current_state["current_turn"]["attack"] = updated_attack_payload
+                executor.current_state["manual_wait_active"] = False
+                executor.current_state["manual_input_required"] = None
+                executor.current_state["routing_signal"] = RoutingSignals.ATTACK
+            
+            # --- Update Database Record ---
+            db = get_db()
+            if db:
+                db_ops = get_db_ops(db)
+                await db_ops.update_run(run_id, {
+                    "status": RunStatus.RUNNING.value,
+                    "manual_prompt_received_at": datetime.utcnow().isoformat()
+                })
+                await executor.manual_ops.update_session(session_id, {
+                    "status": "active",
+                    "turn_count": turn_index + 1
+                })
+
+            # --- Signal Executor to Resume ---
+            executor._manual_input_event.set()
+            executor._manual_wait_active = False
+            executor._manual_input_event.clear()
+
+            return {
+                "message": "Manual prompt received and execution resumed.",
+                "run_id": run_id,
+                "session_id": session_id,
+                "turn_id": turn_id
+            }
+            
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except RuntimeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Integration of other manual routes into main router would happen here ---
+# Example:
+# from server.api.manual_routes import router as manual_router
+# router.include_router(manual_router, prefix="/api/v1/runs")
+
+# --- Placeholder for additional refined WebSocket event logic ---
+# The actual WebSocket event emission logic will be integrated into the RunExecutor
+# and potentially middleware when specific states are entered/exited.
+
+async def emit_manual_wait_events(executor: RunExecutor, session_id: str):
+    """Emits WebSocket events when a run enters a manual wait state."""
+    socketio_manager = get_socketio_manager()
+    if not socketio_manager:
+        print("Warning: Socket.IO manager not initialized. Cannot emit wait events.")
+        return
+
+    run_id = executor.run_id
+    # Event indicating a manual input is required
+    await socketio_manager.broadcast_to_room(
+        run_id,
+        'manual_input_required',
+        {
+            'run_id': run_id,
+            'session_id': session_id,
+            'input_type': executor.current_state.get("manual_input_required", "unknown"),
+            'timeout_seconds': executor.graph_config.attack_node_config.max_attempts_per_turn, 
+            'status': 'waiting'
+        }
+    )
+
+    # Event indicating the run is paused specifically for input
+    await socketio_manager.broadcast_to_room(
+        run_id,
+        'run_paused_for_input',
+        {
+            'run_id': run_id,
+            'session_id': session_id,
+            'status': RunStatus.WAITING_INPUT.value
+        }
+    )
+
+async def emit_resumption_event(run_id: str, session_id: str, turn_id: str):
+    """Emits WebSocket event when manual input is received and run resumes."""
+    socketio_manager = get_socketio_manager()
+    if not socketio_manager:
+        return
+
+    await socketio_manager.broadcast_to_room(
+        run_id,
+        'manual_input_received',
+        {
+            'run_id': run_id,
+            'session_id': session_id,
+            'turn_id': turn_id,
+            'status': 'processing'
+        }
+    )
+
+# Placeholder for other WebSocket event emissions (e.g., turn updates)
+# These would be integrated into the nodes' execute methods or middleware.
 

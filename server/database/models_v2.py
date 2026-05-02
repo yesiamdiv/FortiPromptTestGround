@@ -1,13 +1,13 @@
+
 """
 Updated Database Models - Separate Collections
-
-Attacks, defences, and evaluations are stored in separate collections
-for easier querying and better data organization.
 """
 
 from pydantic import BaseModel, Field
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime
+
+from server.config.models import GraphConfig # Import the new GraphConfig model
 
 
 # ============================================================================
@@ -94,12 +94,13 @@ class EvaluationData(BaseModel):
 # Configuration Models
 # ============================================================================
 
-class RunConfig(BaseModel):
-    """Configuration for a run"""
-    global_config: Dict[str, Any] = Field(default_factory=dict)
-    attack_config: Dict[str, Any] = Field(default_factory=dict)
-    defence_config: Dict[str, Any] = Field(default_factory=dict)
-    evaluation_config: Dict[str, Any] = Field(default_factory=dict)
+# Removed unused config models as per feedback
+# class RunConfig(BaseModel):
+#     """Configuration for a run"""
+#     global_config: Dict[str, Any] = Field(default_factory=dict)
+#     attack_config: Dict[str, Any] = Field(default_factory=dict)
+#     defence_config: Dict[str, Any] = Field(default_factory=dict)
+#     evaluation_config: Dict[str, Any] = Field(default_factory=dict)
 
 
 # ============================================================================
@@ -108,23 +109,20 @@ class RunConfig(BaseModel):
 
 class RunModel(BaseModel):
     """
-    Run model with references to separate collections.
-    
-    Attacks, defences, and evaluations are stored in separate collections
-    and linked by run_id.
+    Run model with references to separate collections and graph configuration.
     """
     
     run_id: str = Field(..., description="Unique run identifier")
     name: str = Field(..., description="Human-readable run name")
-    status: str = Field(..., description="Run status: running, completed, failed, stopped")
+    status: str = Field(..., description="Run status: running, completed, failed, stopped, idle") # Added 'idle' status
     description: str = Field(default="", description="Run description")
     
     # Strategy info
     strategy: str = Field(..., description="Strategy name")
     components: List[str] = Field(default_factory=list, description="Component names used")
     
-    # Configuration
-    config: RunConfig = Field(default_factory=RunConfig, description="Run configuration")
+    # Graph and overall run configuration
+    graph_config: GraphConfig = Field(..., description="Defines the graph topology, node types, and strategy config")
     
     # Timestamps
     created_at: str = Field(..., description="ISO timestamp when created")
@@ -132,14 +130,14 @@ class RunModel(BaseModel):
     completed_at: Optional[str] = Field(None, description="ISO timestamp when completed")
     
     # Statistics (computed from separate collections)
-    total_iterations: int = Field(default=0, description="Total attack iterations")
-    successful_iterations: int = Field(default=0, description="Successful attack count")
-    final_score: Optional[float] = Field(None, description="Final evaluation score")
-    best_score: Optional[float] = Field(None, description="Best score achieved")
+    total_iterations: int = Field(default=0, description="Total attack iterations performed")
+    successful_iterations: int = Field(default=0, description="Successful attack count based on evaluation")
+    final_score: Optional[float] = Field(None, description="Final evaluation score of the last iteration")
+    best_score: Optional[float] = Field(None, description="Best score achieved across all iterations")
     
     # Metadata
     intent: str = Field(..., description="User's stated intent")
-    target: Optional[str] = Field(None, description="Target system name")
+    target: Optional[str] = Field(None, description="Target system name or identifier")
     user_id: Optional[str] = None
     session_id: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
@@ -157,7 +155,24 @@ class RunModel(BaseModel):
                 "description": "Testing jailbreak resistance",
                 "strategy": "iterative_improvement",
                 "components": ["ollama", "http_defence", "llm_eval"],
-                "config": {"global_config": {}},
+                "graph_config": {
+                    "graph_type": "automatic",
+                    "attack_node_config": {
+                        "node_type": "llm_attack",
+                        "max_attempts_per_turn": 3
+                    },
+                    "defense_node_config": {
+                        "node_type": "heuristic_defense"
+                    },
+                    "evaluation_node_config": {
+                        "node_type": "llm_eval"
+                    },
+                    "strategy_config": {
+                        "strategy_name": "iterative_improvement",
+                        "strategy_params": {"learning_rate": 0.01, "temperature": 0.7}
+                    },
+                    "max_total_iterations": 100
+                },
                 "created_at": "2024-01-01T12:00:00",
                 "started_at": "2024-01-01T12:00:01",
                 "completed_at": "2024-01-01T12:05:00",

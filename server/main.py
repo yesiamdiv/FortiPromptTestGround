@@ -1,8 +1,5 @@
-"""
-Main FastAPI Application - Updated
 
-Entry point with startup initialization for existing runs.
-"""
+"""Main FastAPI Application - Updated with Startup Registrations"""
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,11 +7,12 @@ from contextlib import asynccontextmanager
 import os
 
 from server.api.routes import router as main_router
-from server.api.attack_routes import router as attack_router
-from server.api.defense_routes import router as defense_router
+from server.api.attack_routes import router as attack_router # Assuming these exist
+from server.api.defense_routes import router as defense_router # Assuming these exist
 from server.database.connection import init_db, close_db, get_db
 from server.websocket.socketio_manager import get_socketio_manager
 from server.run_manager import get_run_manager
+from engine.registry import register_default_nodes, register_default_strategies # Import registration functions
 
 
 # ============================================================================
@@ -25,8 +23,7 @@ from server.run_manager import get_run_manager
 async def lifespan(app: FastAPI):
     """
     Application lifespan manager.
-    
-    Handles startup and shutdown tasks.
+    Handles startup and shutdown tasks, including registry initialization.
     """
     # === STARTUP ===
     print("🚀 Starting Adversarial Testing Engine...")
@@ -48,18 +45,29 @@ async def lifespan(app: FastAPI):
     run_manager = get_run_manager()
     print("✓ Run manager initialized")
     
-    # 4. Restore existing runs
+    # 4. Initialize Registries
+    # This is crucial to make nodes and strategies available for dynamic loading.
+    try:
+        await register_default_nodes() # Register default nodes
+        print("✓ Node registry populated")
+        await register_default_strategies() # Register default strategies
+        print("✓ Strategy registry populated")
+    except Exception as e:
+        print(f"⚠ Failed to initialize registries: {e}")
+
+    # 5. Restore existing runs (from previous implementation)
+    # This part might need adjustments if run restoration logic changes significantly
+    # based on the new dynamic graph configuration.
     await restore_existing_runs(socketio_manager, run_manager)
     
     print("🎉 Server ready to accept requests!\n")
     
-    yield
+    yield # Application runs here
     
     # === SHUTDOWN ===
     print("\n🛑 Shutting down Adversarial Testing Engine...")
-    
+
     # Stop all active runs
-    run_manager = get_run_manager()
     active_runs = run_manager.get_active_runs()
     
     for run_id in active_runs:
@@ -80,11 +88,9 @@ async def restore_existing_runs(socketio_manager, run_manager):
     """
     Restore existing runs on startup.
     
-    This function:
-    1. Fetches all runs from database
-    2. Creates Socket.IO rooms for each run
-    3. Tracks active/running runs
-    4. Optionally resumes interrupted runs
+    Fetches runs from DB, creates Socket.IO rooms, and tracks active runs.
+    The logic for handling interrupted 'running' states (e.g., auto-resume)
+    might need further refinement based on the new dynamic graph setup.
     """
     print("\n📦 Restoring existing runs...")
     
@@ -94,13 +100,11 @@ async def restore_existing_runs(socketio_manager, run_manager):
         return
     
     try:
-        # Fetch all runs
         runs_cursor = db.runs.find({})
         runs = await runs_cursor.to_list(length=None)
         
         print(f"Found {len(runs)} existing runs in database")
         
-        # Track statistics
         stats = {
             "total": len(runs),
             "idle": 0,
@@ -115,20 +119,18 @@ async def restore_existing_runs(socketio_manager, run_manager):
             run_id = run["run_id"]
             status = run.get("status", "idle")
             
-            # Count by status
             stats[status] = stats.get(status, 0) + 1
             
-            # Create Socket.IO room for this run
-            # Note: Rooms are created implicitly when clients join,
-            # but we can track them in the manager
-            socketio_manager.run_rooms[run_id] = set()
-            stats["rooms_created"] += 1
+            # Track Socket.IO rooms (manager handles actual room creation on join)
+            if run_id not in socketio_manager.run_rooms:
+                socketio_manager.run_rooms[run_id] = set()
+                stats["rooms_created"] += 1
             
-            # Handle runs that were interrupted
+            # Handle interrupted runs ('running' status)
             if status == "running":
                 print(f"  ⚠ Run {run_id} was interrupted (status: running)")
-                
-                # Option 1: Mark as stopped
+                # For now, we mark them as stopped. Auto-resume needs careful implementation
+                # with the dynamic graph and strategy loading.
                 from server.database.operations import get_db_ops
                 db_ops = get_db_ops(db)
                 await db_ops.update_run(run_id, {
@@ -136,29 +138,7 @@ async def restore_existing_runs(socketio_manager, run_manager):
                     "error": "Server restart - run was interrupted"
                 })
                 print(f"    → Marked as stopped")
-                
-                # Option 2: Auto-resume (uncomment to enable)
-                # try:
-                #     print(f"    → Attempting to resume...")
-                #     # Get strategy and config
-                #     strategy_name = run.get("strategy", "default")
-                #     strategy_config = run.get("config", {}).get("strategy_config", {})
-                #     initial_payload = {
-                #         "intent": run.get("intent", ""),
-                #         "target": run.get("target")
-                #     }
-                #     
-                #     await run_manager.start_run(
-                #         run_id=run_id,
-                #         strategy_name=strategy_name,
-                #         strategy_config=strategy_config,
-                #         initial_payload=initial_payload
-                #     )
-                #     print(f"    ✓ Resumed successfully")
-                # except Exception as e:
-                #     print(f"    ✗ Resume failed: {e}")
-        
-        # Print summary
+
         print("\n📊 Run restoration summary:")
         print(f"  Total runs: {stats['total']}")
         print(f"  Idle: {stats.get('idle', 0)}")
@@ -167,7 +147,7 @@ async def restore_existing_runs(socketio_manager, run_manager):
         print(f"  Completed: {stats.get('completed', 0)}")
         print(f"  Failed: {stats.get('failed', 0)}")
         print(f"  Stopped: {stats.get('stopped', 0)}")
-        print(f"  Socket.IO rooms created: {stats['rooms_created']}")
+        print(f"  Socket.IO rooms tracked: {stats['rooms_created']}")
         print("")
         
     except Exception as e:
@@ -228,7 +208,9 @@ async def root():
             "Added lifecycle endpoints: start, pause, resume, stop",
             "Added attack and defense configuration endpoints",
             "Auto-restore runs on startup",
-            "Per-run engine isolation"
+            "Per-run engine isolation",
+            "Dynamic graph and strategy loading",
+            "Structured configuration management"
         ]
     }
 
@@ -237,7 +219,6 @@ async def root():
 # Mount Socket.IO
 # ============================================================================
 
-# Get Socket.IO manager and mount its ASGI app
 socketio_manager = get_socketio_manager()
 socket_app = socketio_manager.get_asgi_app()
 
@@ -252,10 +233,9 @@ app.mount("/socket", socket_app)
 if __name__ == "__main__":
     import uvicorn
     
-    # Get config from environment
     host = os.getenv("SERVER_HOST", "0.0.0.0")
     port = int(os.getenv("SERVER_PORT", "8000"))
-    reload = os.getenv("SERVER_RELOAD", "false").lower() == "true"  # Disabled by default
+    reload = os.getenv("SERVER_RELOAD", "false").lower() == "true"
     
     print(f"\n🌐 Starting server on http://{host}:{port}")
     print(f"📚 API docs available at http://{host}:{port}/docs")
@@ -268,4 +248,3 @@ if __name__ == "__main__":
         reload=reload,
         log_level="info"
     )
-
