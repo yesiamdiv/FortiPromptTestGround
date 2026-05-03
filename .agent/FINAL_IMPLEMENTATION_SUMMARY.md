@@ -400,7 +400,7 @@ async def test():
     
     engine = create_default_engine()
     result = await engine.execute_run(
-        initial_payload={"intent": "Test jailbreak"},
+        payload={"intent": "Test jailbreak"},
         strategy=strategy
     )
     

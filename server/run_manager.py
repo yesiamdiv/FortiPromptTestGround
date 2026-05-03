@@ -74,7 +74,7 @@ class RunExecutor:
         if not db:
             raise RuntimeError("Database not connected")
 
-    async def start(self, initial_payload: Dict[str, Any]) -> SystemState:
+    async def start(self, payload: Dict[str, Any]) -> SystemState:
         """Start run execution"""
         if self.status == RunStatus.RUNNING:
             raise RuntimeError(f"Run {self.run_id} is already running")
@@ -83,7 +83,7 @@ class RunExecutor:
         await self._update_db_status(RunStatus.RUNNING)
         
         try:
-            final_state = await self._run_with_controls(initial_payload)
+            final_state = await self._run_with_controls(payload)
             
             if self.status == RunStatus.RUNNING:
                 self.status = RunStatus.COMPLETED
@@ -99,18 +99,17 @@ class RunExecutor:
             await self._update_db_status(RunStatus.FAILED, error=str(e))
             raise
     
-    async def _run_with_controls(self, initial_payload: Dict[str, Any]) -> SystemState:
+    async def _run_with_controls(self, payload: Dict[str, Any]) -> SystemState:
         """Run execution delegating entirely to the WorkflowEngine"""
         
         await self._initialize_dependencies() 
+
+        runtime_config = payload.pop("runtime_config", {})
         
-        # Delegate entirely to the engine. 
-        # The engine handles the stream, state merging, middlewares, and initial state creation.
-        # Pass graph_config.dict() for runtime context. Strategy is embedded in graph config.
         final_state = await self.engine.execute_run(
-            initial_payload=initial_payload,
-            # REMOVED: strategy parameter as it's handled by graph config
-            config=self.graph_config.dict() 
+            payload=payload,
+            run_id=self.run_id,
+            config=runtime_config
         )
         
         self._current_state = final_state
@@ -211,11 +210,11 @@ class RunManager:
             )
             self.executors[run_id] = executor
             
-            initial_payload = input_payload if input_payload else {
+            payload = input_payload if input_payload else {
                 "description": run_data.get("description", "")
             }
 
-            executor.task = asyncio.create_task(executor.start(initial_payload))
+            executor.task = asyncio.create_task(executor.start(payload))
             
             return {
                 "run_id": run_id,

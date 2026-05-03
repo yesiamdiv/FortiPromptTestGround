@@ -48,7 +48,7 @@ class WebSocketMiddlewareV2(BaseMiddleware):
         """Broadcast run start event"""
         try:
             strategy = config["configurable"]["strategy"]
-            initial_payload = initial_state.get("initial_payload", {})
+            payload = initial_state.get("payload", {})
             
             # Initialize iteration counter
             self._iteration_counters[run_id] = 0
@@ -57,8 +57,8 @@ class WebSocketMiddlewareV2(BaseMiddleware):
                 run_id,
                 {
                     'strategy': strategy.name,
-                    'intent': initial_payload.get("intent", "unknown"),
-                    'target': initial_payload.get("target"),
+                    'intent': payload.get("intent", "unknown"),
+                    'target': payload.get("target"),
                     'timestamp': initial_state.get("start_time")
                 }
             )

@@ -18,7 +18,7 @@ All strategies must inherit from `AttackStrategy` and implement three methods:
 from strategies.base import AttackStrategy
 
 class MyStrategy(AttackStrategy):
-    def setup(self, initial_payload: dict) -> dict:
+    def setup(self, payload: dict) -> dict:
         """
         Called once at run start.
         Initialize strategy_context and return routing signal.
@@ -131,8 +131,8 @@ class MyStrategy(AttackStrategy):
         with open('strategies/data/prompts/my_prompts.json') as f:
             return json.load(f)
     
-    def setup(self, initial_payload):
-        intent = initial_payload.get("intent")
+    def setup(self, payload):
+        intent = payload.get("intent")
         
         return {
             "strategy_context": {
@@ -202,7 +202,7 @@ strategy = MyStrategy({"max_attempts": 3})
 engine = create_default_engine()
 
 result = await engine.execute_run(
-    initial_payload={"intent": "test jailbreak"},
+    payload={"intent": "test jailbreak"},
     strategy=strategy
 )
 ```
@@ -244,7 +244,7 @@ def process_end_of_loop(self, state):
 
 **Multi-seed parallel testing:**
 ```python
-def setup(self, initial_payload):
+def setup(self, payload):
     return {
         "strategy_context": {
             "seed_queue": ["seed1", "seed2", "seed3"],

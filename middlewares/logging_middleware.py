@@ -18,7 +18,7 @@ class LoggingMiddleware(BaseMiddleware):
     async def before_run(self, initial_state, config, run_id):
         self.run_timings[run_id] = datetime.utcnow().timestamp()
         strategy_name = config["configurable"]["strategy"].name
-        intent = initial_state.get("initial_payload", {}).get("intent", "unknown")
+        intent = initial_state.get("payload", {}).get("intent", "unknown")
         
         self._log(f"\n{'='*60}")
         self._log(f"🚀 RUN STARTED: {run_id}")

@@ -75,7 +75,7 @@ class ServerEvalNode(BaseAdversarialNode):
             "run_context": {
                 "run_id": state.get("run_id"),
                 "turn_id": current_turn.get("turn_id"),
-                "intent": state.get("initial_payload", {}).get("intent")
+                "intent": state.get("payload", {}).get("intent")
             }
         }
         

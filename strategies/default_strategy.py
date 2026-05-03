@@ -21,8 +21,8 @@ class DefaultStrategy(AttackStrategy):
             default_config.update(config)
         super().__init__(default_config)
     
-    def setup(self, initial_payload: Dict[str, Any]) -> Dict[str, Any]:
-        intent = initial_payload.get("intent", "default test")
+    def setup(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        intent = payload.get("intent", "default test")
         return {
             "strategy_context": {
                 "intent": intent,
@@ -35,7 +35,7 @@ class DefaultStrategy(AttackStrategy):
     
     # Placeholder for initialization - can be expanded later
     def initialize(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        print(f"Initializing DefaultStrategy for run with intent: {state.get('initial_payload', {}).get('intent')}")
+        print(f"Initializing DefaultStrategy for run with intent: {state.get('payload', {}).get('intent')}")
         # If strategy needs to do something on initialization, it happens here
         return state # Return state as is, or with modifications if needed
 

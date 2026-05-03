@@ -56,30 +56,30 @@ class DatabaseMiddlewareV2(BaseMiddleware):
         try:
             db_ops = get_db_ops(db)
             strategy = config["configurable"]["strategy"]
-            initial_payload = initial_state.get("initial_payload", {})
+            payload = initial_state.get("payload", {})
             
             # Initialize iteration counter for this run
             self._iteration_counters[run_id] = 0
             
             run_data = {
                 "run_id": run_id,
-                "name": initial_payload.get("name", f"Run {run_id[:8]}"),
+                "name": payload.get("name", f"Run {run_id[:8]}"),
                 "status": "running",
-                "description": initial_payload.get("description", ""),
+                "description": payload.get("description", ""),
                 "strategy": strategy.name,
                 "components": [],  # TODO: Track components used
                 "config": {
-                    "global_config": initial_payload.get("config", {}),
+                    "global_config": payload.get("config", {}),
                     "attack_config": {},
                     "defence_config": {},
                     "evaluation_config": {}
                 },
                 "started_at": initial_state.get("start_time"),
-                "intent": initial_payload.get("intent", "unknown"),
-                "target": initial_payload.get("target"),
-                "user_id": initial_payload.get("user_id"),
-                "session_id": initial_payload.get("session_id"),
-                "tags": initial_payload.get("tags", [])
+                "intent": payload.get("intent", "unknown"),
+                "target": payload.get("target"),
+                "user_id": payload.get("user_id"),
+                "session_id": payload.get("session_id"),
+                "tags": payload.get("tags", [])
             }
             
             await db_ops.create_run(run_data)

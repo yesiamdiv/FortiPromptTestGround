@@ -181,7 +181,7 @@ from engine.state_schema import create_initial_state, RoutingSignals
 
 state = create_initial_state(
     run_id="run_123",
-    initial_payload={"intent": "test jailbreak"},
+    payload={"intent": "test jailbreak"},
     config={}
 )
 ```
@@ -215,7 +215,7 @@ engine = WorkflowEngine(
 )
 
 final_state = await engine.execute_run(
-    initial_payload={"intent": "test prompt injection"},
+    payload={"intent": "test prompt injection"},
     strategy=my_strategy
 )
 ```
@@ -230,7 +230,7 @@ Abstract interface all strategies must implement.
 ```python
 class AttackStrategy(ABC):
     @abstractmethod
-    def setup(self, initial_payload) -> dict:
+    def setup(self, payload) -> dict:
         """Initialize strategy state"""
         
     @abstractmethod
@@ -425,7 +425,7 @@ Console logging for development and debugging.
 from strategies.base import AttackStrategy
 
 class MyStrategy(AttackStrategy):
-    def setup(self, initial_payload):
+    def setup(self, payload):
         # Initialize your scratchpad
         return {
             "strategy_context": {...},
@@ -549,7 +549,7 @@ async def main():
     
     # Execute run
     result = await engine.execute_run(
-        initial_payload={
+        payload={
             "intent": "Test adversarial robustness",
             "target": "example-ai-system"
         },

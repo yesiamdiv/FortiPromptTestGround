@@ -78,7 +78,7 @@ async def main():
     
     # Execute run
     result = await engine.execute_run(
-        initial_payload={
+        payload={
             "intent": "Test jailbreak resistance",
             "target": "my-ai-system"
         },
@@ -322,8 +322,8 @@ from engine.domain_models import create_simple_attack
 from engine.state_schema import create_turn_data, RoutingSignals
 
 class MyStrategy(AttackStrategy):
-    def setup(self, initial_payload):
-        intent = initial_payload.get("intent")
+    def setup(self, payload):
+        intent = payload.get("intent")
         
         return {
             "strategy_context": {
@@ -378,7 +378,7 @@ from strategies.my_strategy import MyStrategy
 strategy = MyStrategy({"max_attempts": 10})
 
 result = await engine.execute_run(
-    initial_payload={"intent": "Custom test"},
+    payload={"intent": "Custom test"},
     strategy=strategy
 )
 ```

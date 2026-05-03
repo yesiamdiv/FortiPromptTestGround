@@ -14,7 +14,7 @@ class AttackStrategy(ABC):
         self.name = self.__class__.__name__
     
     @abstractmethod
-    def setup(self, initial_payload: Dict[str, Any]) -> Dict[str, Any]:
+    def setup(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Initialize strategy - called once at start"""
         raise NotImplementedError
     

@@ -37,9 +37,11 @@ class ConfigurableGraphBuilder:
         # --- Node Instantiation ---
         try:
             # Instantiate Attack Node
+            attack_config = self.graph_config.attack_node_config.dict()
+            attack_config["strategy"] = self.strategy 
             attack_node_instance = self.node_registry.get(
                 self.graph_config.attack_node_config.node_type,
-                config=self.graph_config.attack_node_config.dict() # Pass node config
+                config=attack_config 
             )
             self.graph.add_node("attack", attack_node_instance.execute)
             
@@ -99,7 +101,7 @@ class ConfigurableGraphBuilder:
         
         # Ensure current_turn is initialized if not present
         if 'current_turn' not in state or state['current_turn'] is None:
-            initial_state_temp = create_initial_state(state.get('run_id', 'unknown_run'), state.get('initial_payload', {}), state.get('config', {}))
+            initial_state_temp = create_initial_state(state.get('run_id', 'unknown_run'), state.get('payload', {}), state.get('config', {}))
             state['current_turn'] = initial_state_temp.get('current_turn')
         
         # Initialize strategy context if not already present, and call strategy's init

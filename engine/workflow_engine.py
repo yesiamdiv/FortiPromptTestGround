@@ -20,7 +20,7 @@ class WorkflowEngine:
     
     async def execute_run(
         self,
-        initial_payload: Dict[str, Any],
+        payload: Dict[str, Any],
         # REMOVED: strategy parameter as it's embedded in graph config for router
         config: Dict[str, Any] = None,  # This config is for runtime context, NOT strategy embedding
         run_id: str = None
@@ -33,7 +33,7 @@ class WorkflowEngine:
         # so we do not need to inject it into runtime_config here.
         runtime_config = config or {}
 
-        initial_state = create_initial_state(run_id, initial_payload, runtime_config)
+        initial_state = create_initial_state(run_id, payload, runtime_config)
         
         self.active_runs[run_id] = {
             "status": "running",
@@ -59,7 +59,7 @@ class WorkflowEngine:
         
         # Pass the runtime_config (which might contain graph_config details)
         # The router node will extract strategy from its own baked-in config.
-        async for step_data in self.graph.astream(initial_state, config):
+        async for step_data in self.graph.astream(initial_state, config or {}):
             # Trigger middleware
             await self._trigger_after_step(step_data, run_id)
             

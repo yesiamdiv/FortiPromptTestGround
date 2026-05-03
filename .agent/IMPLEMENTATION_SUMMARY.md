@@ -544,7 +544,7 @@ async def main():
     strategy = DefaultStrategy({"max_attempts": 3})
     
     result = await engine.execute_run(
-        initial_payload={"intent": "Test jailbreak"},
+        payload={"intent": "Test jailbreak"},
         strategy=strategy
     )
     
@@ -591,7 +591,7 @@ async def run_parallel_tests():
     
     tasks = [
         engine.execute_run(
-            initial_payload={"intent": f"Test {i}"},
+            payload={"intent": f"Test {i}"},
             strategy=strategy
         )
         for i, strategy in enumerate(strategies)

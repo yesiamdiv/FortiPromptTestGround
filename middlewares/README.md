@@ -105,7 +105,7 @@ class DatabaseMiddleware(BaseMiddleware):
             "status": "running",
             "strategy": config["configurable"]["strategy"].name,
             "started_at": initial_state["start_time"],
-            "intent": initial_state["initial_payload"].get("intent")
+            "intent": initial_state["payload"].get("intent")
         })
     
     async def after_step(self, step_data, run_id):
