@@ -1,4 +1,5 @@
-"""Default Strategy Implementation"""
+"""
+Default Strategy Implementation"""
 
 from typing import Dict, Any
 import random
@@ -32,6 +33,12 @@ class DefaultStrategy(AttackStrategy):
             "routing_signal": RoutingSignals.CONTINUE
         }
     
+    # Placeholder for initialization - can be expanded later
+    def initialize(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        print(f"Initializing DefaultStrategy for run with intent: {state.get('initial_payload', {}).get('intent')}")
+        # If strategy needs to do something on initialization, it happens here
+        return state # Return state as is, or with modifications if needed
+
     async def execute_generation(self, state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
         """
         Generate a simple random attack without LLM.
@@ -91,3 +98,13 @@ class DefaultStrategy(AttackStrategy):
             "strategy_context": context,
             "routing_signal": signal
         }
+
+    def route(self, state: Dict[str, Any]) -> str:
+        """Determine the next routing signal based on the current state."""
+        # For DefaultStrategy, always continue to attack until max attempts are reached,
+        # or END if max attempts are exceeded.
+        context = state.get("strategy_context", {})
+        if context.get("attempt_count", 0) < context.get("max_attempts", 1):
+            return RoutingSignals.ATTACK
+        else:
+            return RoutingSignals.END

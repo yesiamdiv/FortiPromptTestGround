@@ -1,11 +1,13 @@
-"""Workflow Engine - Core Orchestrator"""
+
+"""
+Workflow Engine - Core Orchestrator"""
 
 from typing import Dict, Any, List
 import asyncio
 import uuid
 from datetime import datetime
 from middlewares.base import BaseMiddleware
-from engine.state_schema import create_initial_state
+from engine.state_schema import SystemState, create_initial_state, update_turn_data # IMPORT SYSTEMSTATE
 
 
 class WorkflowEngine:
@@ -22,14 +24,14 @@ class WorkflowEngine:
         strategy,
         config: Dict[str, Any] = None,
         run_id: str = None
-    ) -> Dict[str, Any]:
-        """Execute a complete adversarial run with middleware injection"""
+    ) -> SystemState:  # UPDATE RETURN TYPE
         
         run_id = run_id or f"run_{uuid.uuid4().hex[:12]}"
         runtime_config = {"configurable": {"strategy": strategy}}
         if config:
             runtime_config.update(config)
         
+        # initial_state is already created as a SystemState by create_initial_state
         initial_state = create_initial_state(run_id, initial_payload, runtime_config)
         
         self.active_runs[run_id] = {
@@ -51,19 +53,52 @@ class WorkflowEngine:
             await self._trigger_error(e, run_id)
             raise
     
-    async def _execute_with_streaming(self, initial_state, config, run_id):
-        final_state = initial_state
+    async def _execute_with_streaming(self, initial_state: SystemState, config: Dict[str, Any], run_id: str) -> SystemState:
+        final_state = initial_state.copy()
+        
         async for step_data in self.graph.astream(initial_state, config):
+            # Trigger middleware
             await self._trigger_after_step(step_data, run_id)
-            final_state = {**final_state, **self._extract_updates(step_data)}
+            
+            # Extract combined updates from all nodes that ran in this step
+            updates = self._extract_updates(step_data)
+            
+            # Properly deep-merge the updates into the final state
+            final_state = self._merge_state(final_state, updates)
+            
         return final_state
     
     def _extract_updates(self, step_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Properly extracts and combines updates from all parallel nodes in a step."""
+        combined_updates = {}
         for node_name, updates in step_data.items():
-            return updates
-        return {}
-    
-    async def _trigger_before_run(self, initial_state, config, run_id):
+            if isinstance(updates, dict):
+                # This ensures we grab data from EVERY node that ran, 
+                # instead of returning after the very first one.
+                combined_updates.update(updates)
+        return combined_updates
+
+    def _merge_state(self, current_state: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Deep merges the state to prevent overwriting nested dictionaries."""
+        new_state = current_state.copy()
+        
+        for key, value in updates.items():
+            # Special handling for current_turn to preserve the schema's timestamp logic
+            if key == "current_turn" and isinstance(value, dict) and isinstance(new_state.get("current_turn"), dict):
+                # This ensures attack, defence, and eval stack up together instead of overwriting each other
+                new_state["current_turn"] = update_turn_data(new_state["current_turn"], **value)
+            
+            # Deep merge for other nested dictionaries (like strategy_context)
+            elif isinstance(value, dict) and isinstance(new_state.get(key), dict):
+                new_state[key] = {**new_state[key], **value}
+            
+            # Normal assignment for flat keys (like routing_signal)
+            else:
+                new_state[key] = value
+                
+        return new_state
+
+    async def _trigger_before_run(self, initial_state: SystemState, config, run_id):
         tasks = [m.before_run(initial_state, config, run_id) for m in self.middlewares]
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -73,7 +108,7 @@ class WorkflowEngine:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
     
-    async def _trigger_after_run(self, final_state, run_id):
+    async def _trigger_after_run(self, final_state: SystemState, run_id):
         tasks = [m.after_run(final_state, run_id) for m in self.middlewares]
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -82,7 +117,6 @@ class WorkflowEngine:
         tasks = [m.on_error(error, run_id, step_data) for m in self.middlewares if hasattr(m, 'on_error')]
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-
 
 def create_default_engine():
     """Create a default engine with logging middleware"""

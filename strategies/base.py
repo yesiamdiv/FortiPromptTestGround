@@ -1,7 +1,9 @@
-"""Base Strategy Interface"""
+"""
+Base Strategy Interface"""
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any
+from engine.state_schema import SystemState # IMPORT SYSTEMSTATE
 
 
 class AttackStrategy(ABC):
@@ -17,7 +19,7 @@ class AttackStrategy(ABC):
         raise NotImplementedError
     
     @abstractmethod
-    async def execute_generation(self, state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute_generation(self, state: SystemState, config: Dict[str, Any]) -> Dict[str, Any]:
         """
         Generate next attack - called by AttackNode.
         
@@ -34,10 +36,28 @@ class AttackStrategy(ABC):
         raise NotImplementedError
     
     @abstractmethod
-    def process_end_of_loop(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    def process_end_of_loop(self, state: SystemState) -> Dict[str, Any]:
         """Process evaluation and decide routing - called after EvalNode"""
         raise NotImplementedError
     
-    def get_next_route(self, state: Dict[str, Any]) -> str:
+    @abstractmethod
+    def route(self, state: SystemState) -> str:
+        """Determine the next routing signal based on the current state."""
+        raise NotImplementedError
+
+    # Placeholder for initialization - to be implemented by specific strategies
+    @abstractmethod
+    def initialize(self, state: SystemState) -> Dict[str, Any]:
+        """Initialize the strategy, potentially loading resources or setting up context.
+        
+        Args:
+            state: Current system state.
+        
+        Returns:
+            Modified state dictionary.
+        """
+        raise NotImplementedError
+
+    def get_next_route(self, state: SystemState) -> str:
         """Extract routing signal from state"""
         return state.get("routing_signal", "__end__")

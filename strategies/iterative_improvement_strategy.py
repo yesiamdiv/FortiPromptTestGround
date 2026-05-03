@@ -1,7 +1,7 @@
 """
 Iterative Improvement Strategy
 
-A sophisticated strategy that iteratively refines attack prompts based on feedback.
+Iterative Improvement Strategy
 
 Key Features:
 - Maintains memory of previous attempts
@@ -54,16 +54,6 @@ class IterativeImprovementStrategy(AttackStrategy):
         self.provider = provider
         self._load_prompts()
     
-    def _load_prompts(self):
-        """Load instruction prompts from JSON file"""
-        prompt_file = Path(__file__).parent / "data" / "prompts" / "iterative_improvement.json"
-        
-        with open(prompt_file, 'r') as f:
-            prompts = json.load(f)
-        
-        self.generator_prompt = prompts["generator_prompt"]
-        self.improver_prompt = prompts["improver_prompt"]
-    
     def setup(self, initial_payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Initialize strategy context.
@@ -90,6 +80,29 @@ class IterativeImprovementStrategy(AttackStrategy):
             "routing_signal": RoutingSignals.CONTINUE
         }
     
+    def initialize(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Initialize the strategy, potentially loading resources or setting up context.
+        
+        Args:
+            state: Current system state.
+        
+        Returns:
+            Modified state dictionary.
+        """
+        print(f"Initializing IterativeImprovementStrategy...")
+        # Ensure prompts are loaded (should be done in __init__, but can be reloaded here if needed)
+        # self._load_prompts() 
+        
+        # If the strategy needs to perform setup based on initial payload or config,
+        # it can be done here.
+        # Example: Load initial attack prompt if provided in initial_payload
+        if 'initial_attack_prompt' in state.get('initial_payload', {}):
+            context = state.get('strategy_context', {{}})
+            context['initial_attack_prompt'] = state['initial_payload']['initial_attack_prompt']
+            state['strategy_context'] = context
+            
+        return state
+
     async def execute_generation(self, state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
         """
         Generate attack using LLM.
@@ -104,7 +117,7 @@ class IterativeImprovementStrategy(AttackStrategy):
         turn_id = f"turn_{iteration + 1}"
         
         # Determine which prompt to use
-        if iteration == 0 or not context["attack_history"]:
+        if iteration == 0 or not context.get("attack_history"):
             # First attack: generate fresh
             attack_text = await self._generate_initial_attack(context)
         else:
@@ -147,7 +160,8 @@ class IterativeImprovementStrategy(AttackStrategy):
             Generated attack text
         """
         prompt = self.generator_prompt.format(
-            intent=context["intent"]
+            intent=context["intent"],
+            initial_attack_prompt=context.get('initial_attack_prompt', 'Develop a novel attack.') # Use provided initial prompt or fallback
         )
         
         attack_text = await self.provider.generate(
@@ -256,3 +270,22 @@ class IterativeImprovementStrategy(AttackStrategy):
             f"Best score: {context.get('best_score', 0.0):.2f}, "
             f"Target: {context.get('target_score', 0.0):.2f}"
         )
+
+    def route(self, state: Dict[str, Any]) -> str:
+        """Determine the next routing signal based on the current state."""
+        context = state.get("strategy_context", {})
+        evaluation = state.get("current_turn", {}).get("evaluation")
+        
+        # Check if target score is met or max iterations reached
+        if context.get("target_achieved", False):
+            return RoutingSignals.END
+        elif context.get("iteration_count", 0) >= context.get("max_iterations", 0):
+            return RoutingSignals.END
+        
+        # If evaluation is missing, continue to generate/improve
+        if not evaluation:
+            return RoutingSignals.ATTACK
+
+        # Otherwise, continue if not met target and not max iterations
+        # This logic is already in process_end_of_loop, so we can rely on that state update
+        return state.get("routing_signal", RoutingSignals.ATTACK)

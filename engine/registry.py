@@ -35,7 +35,7 @@ class NodeRegistry:
             raise ValueError(f"Node '{name}' already registered.")
         self._registry[name] = factory
 
-    def get(self, name: str, **kwargs: Any) -> Any:
+    def get(self, name: str, **kwargs: Any) -> BaseAdversarialNode:
         """Get and instantiate a node using its factory."""
         factory = self._registry.get(name)
         if not factory:
