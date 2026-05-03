@@ -101,6 +101,7 @@ def register_all_components():
     _node_registry.register("ensemble_defense", lambda **k: EnsembleDefenceNode(**k))
     _node_registry.register("server_eval", lambda **k: ServerEvalNode(**k))
     _node_registry.register("llm_eval", lambda **k: LLMEvalNode(**k))
+    _node_registry.register("multilayer_defense", lambda **k: MultilayerDefenseNode(**k))
 
     # Register Strategies
     _strategy_registry.register("default", DefaultStrategy)
