@@ -15,7 +15,7 @@ class ManualWSMiddleware(BaseMiddleware):
     """
     WebSocket middleware for manual runs.
     
-    Manages broadcasting state changes and requesting user input.
+    Manages broadcasting state changes and signaling turn completion.
     """
     
     def __init__(self, socketio_manager: SocketIOManager, config: Dict[str, Any] = None):
@@ -33,7 +33,6 @@ class ManualWSMiddleware(BaseMiddleware):
     async def before_run(self, initial_state: SystemState, config: Dict[str, Any], run_id: str):
         """Broadcast run start event for manual mode"""
         try:
-            # CORRECT WAY to access strategy name from initial_state
             strategy_config = initial_state.get("config", {}).get("strategy_config", {})
             strategy_name = strategy_config.get("strategy_name", "unknown_strategy")
             payload = initial_state.get("payload", {})
@@ -52,7 +51,7 @@ class ManualWSMiddleware(BaseMiddleware):
             print(f"[ManualWSMiddleware] Error in before_run: {e}")
 
     async def after_step(self, step_data, run_id):
-        """Broadcast step updates and handle manual input requests"""
+        """Broadcast step updates"""
         if not step_data:
             return
         
@@ -62,7 +61,7 @@ class ManualWSMiddleware(BaseMiddleware):
         try:
             context = node_output.get("strategy_context", {})
             iteration = context.get("iteration_count", 0)
-            turn_id = context.get("turn_id", f"turn_{iteration}")
+            turn_id = context.get("current_turn", {}).get("turn_id", f"turn_{iteration}") # Get turn_id from current_turn
 
             if node_name == "attack" and self.config.get("broadcast_attacks"):
                 await self._broadcast_attack(run_id, iteration, node_output, turn_id)
@@ -75,41 +74,23 @@ class ManualWSMiddleware(BaseMiddleware):
             
             elif node_name == "router":
                 await self._broadcast_routing(run_id, node_output)
-                # Check if manual input is required and broadcast accordingly
-                if node_output.get("routing_signal") == RoutingSignals.REQUIRE_USER_INPUT:
-                    await self.ws_ops.broadcast_manual_input_required(run_id, turn_id)
             
         except Exception as e:
             print(f"[ManualWSMiddleware] Error in after_step: {e}")
     
     async def after_run(self, final_state, run_id):
-        """Broadcast run completion or pause event"""
+        """Broadcast run completion or idle event"""
         try:
             context = final_state.get("strategy_context", {})
             current_turn = final_state.get("current_turn", {})
-            routing_signal = final_state.get("routing_signal")
+            routing_signal = final_state.get("routing_signal") # Should be END for manual runs
             
-            if routing_signal == RoutingSignals.REQUIRE_USER_INPUT:
-                # If the run was paused for manual input, broadcast that state
-                await self.ws_ops.broadcast_run_paused(run_id)
-            else:
-                # Otherwise, broadcast normal completion
-                final_data = {
-                    'total_attempts': context.get("iteration_count", 0),
-                    'routing_signal': routing_signal,
-                    'timestamp': current_turn.get("timestamp")
-                }
-                
-                if current_turn.get("evaluation"):
-                    eval_result = current_turn["evaluation"]
-                    final_data['final_evaluation'] = {
-                        'score': eval_result.get_score(),
-                        'success': eval_result.is_success(),
-                        'category': eval_result.get_category(),
-                        'summary': eval_result.to_summary()
-                    }
-                
-                await self.ws_ops.broadcast_run_completed(run_id, final_data)
+            # Broadcast that the current turn's execution is over and awaiting new input
+            await self.ws_ops.broadcast_run_idle(run_id, {
+                'message': 'Awaiting user input for next turn',
+                'last_turn_id': current_turn.get("turn_id"),
+                'iteration_count': context.get("iteration_count", 0)
+            })
             
         except Exception as e:
             print(f"[ManualWSMiddleware] Error in after_run: {e}")

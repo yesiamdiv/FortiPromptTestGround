@@ -7,6 +7,7 @@ from typing import Dict, Any, Callable, Type
 # Import base classes and specific node/strategy implementations
 from nodes.base import BaseAdversarialNode, StrategyProxyNode
 from nodes.default_nodes import create_default_nodes # Factory for default nodes
+from nodes.multilayer_defense_node import MultilayerDefenseNode
 from nodes.strategy_attack_node import StrategyDrivenAttackNode
 from nodes.ensemble_defence_node import EnsembleDefenceNode
 from nodes.server_eval_node import ServerEvalNode
@@ -16,6 +17,7 @@ from nodes.router_node import RouterNode
 # Import strategy classes
 from strategies.default_strategy import DefaultStrategy
 from strategies.iterative_improvement_strategy import IterativeImprovementStrategy
+from strategies.manual_strategy import ManualStrategy # Import ManualStrategy
 
 # Import provider registry and registration function
 from engine.provider_registry import get_provider_registry, register_all_providers
@@ -106,6 +108,7 @@ def register_all_components():
     # Register Strategies
     _strategy_registry.register("default", DefaultStrategy)
     _strategy_registry.register("iterative_improvement", IterativeImprovementStrategy)
+    _strategy_registry.register("manual", ManualStrategy) # Register ManualStrategy
     
     # Register Providers (call the registration function)
     register_all_providers()
