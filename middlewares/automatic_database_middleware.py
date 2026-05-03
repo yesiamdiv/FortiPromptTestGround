@@ -35,35 +35,13 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
             return
         
         try:
-            db_ops = get_db_ops(db)
-            # CORRECT WAY to access strategy name from initial_state
+            # Run creation is handled by the API, so no need to create run document here.
+            # We can still extract strategy_name and payload for logging or future use if needed.
             strategy_config = initial_state.get("config", {}).get("strategy_config", {})
             strategy_name = strategy_config.get("strategy_name", "unknown_strategy")
             payload = initial_state.get("payload", {})
             
-            run_data = {
-                "run_id": run_id,
-                "name": payload.get("name", f"Run {run_id[:8]}"),
-                "status": "running",
-                "description": payload.get("description", ""),
-                "strategy": strategy_name,
-                "components": [],  # TODO: Track components used
-                "config": {
-                    "global_config": payload.get("config", {}),
-                    "attack_config": {},
-                    "defence_config": {},
-                    "evaluation_config": {}
-                },
-                "started_at": initial_state.get("start_time"),
-                "intent": payload.get("intent", "unknown"),
-                "target": payload.get("target"),
-                "user_id": payload.get("user_id"),
-                "session_id": payload.get("session_id"),
-                "tags": payload.get("tags", [])
-            }
-            
-            await db_ops.create_run(run_data)
-            print(f"📝 Run created in database: {run_id}")
+            print(f"📝 Automatic run starting. Run ID: {run_id}, Strategy: {strategy_name}, Intent: {payload.get("intent", "unknown")}")
             
         except Exception as e:
             print(f"[AutomaticDatabaseMiddleware] Error in before_run: {e}")
@@ -120,7 +98,7 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
                 best_score=best_score
             )
             
-            print(f"✅ Run completed in database: {run_id}")
+            print(f"✅ Automatic run completed in database: {run_id}")
             
         except Exception as e:
             print(f"[AutomaticDatabaseMiddleware] Error in after_run: {e}")
@@ -133,7 +111,7 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
         try:
             db_ops = get_db_ops(db)
             await db_ops.mark_run_failed(run_id, str(error))
-            print(f"❌ Run failed in database: {run_id}")
+            print(f"❌ Automatic run failed in database: {run_id}")
             
         except Exception as e:
             print(f"[AutomaticDatabaseMiddleware] Error in on_error: {e}")
