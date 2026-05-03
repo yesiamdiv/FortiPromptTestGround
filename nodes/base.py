@@ -34,7 +34,6 @@ class StrategyProxyNode(BaseAdversarialNode):
         # Pass the state and any relevant runtime config if strategy needs it
         return method(state, runtime_config)
     
-    @abstractmethod
     def get_strategy_method(self) -> str:
         """Return the name of the strategy method to call"""
         raise NotImplementedError
