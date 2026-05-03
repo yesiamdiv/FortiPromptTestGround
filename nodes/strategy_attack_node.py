@@ -7,10 +7,10 @@ patterns, data processing, and custom workflows.
 """
 
 from typing import Dict, Any
-from nodes.base import BaseAdversarialNode
+from nodes.base import BaseAdversarialNode, StrategyProxyNode
 
 
-class StrategyDrivenAttackNode(BaseAdversarialNode):
+class StrategyDrivenAttackNode(StrategyProxyNode):
     """
     Attack node that fully delegates to strategy.
     
@@ -49,10 +49,10 @@ class StrategyDrivenAttackNode(BaseAdversarialNode):
         Returns:
             Updated state with new attack payload
         """
-        strategy:BaseAdversarialNode = self.config.get('strategy')
+        strategy = self.config.get('strategy')
         
         if not strategy:
             raise AttributeError("Strategy instance not found in Attack Node's config.")
             
-        result = await strategy.execute(state, config)
+        result = await strategy.execute_generation(state, config)
         return result
