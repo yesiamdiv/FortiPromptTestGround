@@ -1,90 +1,61 @@
-# Codebase Cleaning & Refactoring Task Plan
-
-## Architectural Philosophy: "The Frame and The Pieces"
-To effectively clean and decouple this application, we are dividing the architecture into two distinct layers:
-1. **The Frame (Core Structure):** The fundamental skeleton. This includes the internal state structures, database models, the unified graph topology, the run manager/executor, the main server, and the API layer organization.
-2. **The Pieces (Functional Components):** The modular elements that plug into the frame. This includes individual nodes (attack, defense, eval, routing), middleware (database, WebSocket), strategies (manual, automatic), and specific API endpoint behaviors.
-
-**Execution Strategy:** We will strictly focus on refactoring **The Frame** first. Once the core structure is completely solid, decoupled, and stateless, we will move on to updating the Pieces.
-
 ---
+## Goal
 
-## Identified Problems and Proposed Solutions
+The user wants to refactor the codebase for cleaning and improving the architecture. The main objective is to decouple components, clarify responsibilities, and establish a cleaner flow, especially concerning manual run execution.
 
-### Problem 1: Run Executor & Run Manager Are Overloaded
-**Current State:** The `RunExecutor` and `RunManager` are doing far too much. They currently manage manual attack logic, handle waiting/pausing for user input, directly update database statuses, and emit WebSocket events.
-**Solution: Make the Executor "Dumb" and Stateless.**
-*   **Remove Statefulness:** Eliminate all logic related to "waiting for manual input", pausing, and resuming from the Run layer. 
-*   **Request-Response Paradigm:** Manual runs must be treated as a standard, stateless request-response cycle. The API call initiates a single graph iteration. The system does not "wait" in memory; it completes the cycle, persists data, and terminates. The "pause" is simply the time between external API calls.
-*   **Refined Flow:** API Request → Initialization → RunExecutor → WorkflowEngine → Graph runs for *one* iteration (based on Strategy) → Middleware handles persistence/WebSockets → Execution completes → Response sent to API.
+## Instructions
 
-### Problem 2: Divergent Graph Topologies
-**Current State:** `engine/graph_builder.py` explicitly uses different logic branches (`manual_routing_logic` vs. `automatic_routing_logic`) depending on the run mode. 
-**Solution: Unified Topology via Strategy Pattern.**
-*   **Single Graph:** There will be only one graph structure. The graph itself does not care if it is in manual or automatic mode.
-*   **Strategy-Driven Routing:** The chosen `Strategy` object is the "brain." It dictates the flow. If the strategy is Automatic, it tells the graph to loop. If the strategy is Manual, it tells the graph to terminate after one cycle.
-*   **No "Wait" Nodes:** Remove all explicit "wait for input" states or nodes from the graph definition.
+- The user wants to divide the application into a "frame" (core structure) and "pieces" (functional components).
+- Key problems identified include:
+    1. Run Executor and Run Manager are overloaded with manual flow logic.
+    2. Graph Builder has mode-specific (manual/automatic) edges and routing logic.
+    3. Ambiguity exists around where graph streaming (`astream`) and middleware management should reside.
+    4. Data models need to correctly represent sessions and their relationship with runs, especially for manual interactions.
+    5. Middleware should be exclusively responsible for persistence and event handling.
+- **Revised Core Principles:**
+    *   Manual runs should be stateless request-response cycles.
+    *   The `Strategy` object should dictate graph flow (looping vs. single iteration) and routing.
+    *   `RunExecutor`/`RunManager` should be unaware of manual vs. automatic modes.
+    *   `WorkflowEngine` orchestrates `astream` and middleware invocation.
+    *   `GraphBuilder` constructs the graph and injects middleware via a factory or itself.
+    *   Middleware handles persistence and broadcasting exclusively.
+- **Clarification:** The user explicitly stated that all code related to *manual input*, *manual attacks*, and *live manual sessions* within the execution flow must be removed. The `ManualTurn` and `ManualSession` data models should be retained in `models_v2.py` for data storage purposes, but not for live execution control.
 
-### Problem 3: LangGraph Streaming & Middleware Responsibility
-**Current State:** There was confusion regarding where the event stream lives. The `RunExecutor` previously had its hands in control flow and WebSocket emissions that bypassed middleware.
-**Solution: Strict `astream` Interception.**
-*   **Workflow Engine Owns the Stream:** The `WorkflowEngine` is solely responsible for using LangGraph's `astream` feature to iterate through the graph's lifecycle. 
-*   **Middleware Exclusivity:** As the `WorkflowEngine` streams the graph's execution, it intercepts the steps to trigger middleware hooks (`after_step`, etc.).
-*   **Zero Executor Involvement:** All Database persistence and WebSocket broadcasting must be handled *exclusively* by their respective middlewares. The `RunExecutor` simply sets up the `WorkflowEngine` and calls `execute_run`.
+## Discoveries
 
-### Problem 4: Middleware Selection & Injection
-**Current State:** It is unclear who is responsible for choosing and attaching the correct mode-specific middleware (e.g., Manual vs. Automatic Database/WebSocket middleware).
-**Solution: The Builder/Factory Pattern.**
-*   **Graph Builder / Factory Responsibility:** When building the graph, the `ConfigurableGraphBuilder` (or a dedicated Middleware Factory) will inspect the selected `Strategy` and `GraphConfig`.
-*   **Dynamic Injection:** Based on the strategy, the builder will instantiate the correct middleware implementations and inject them into the `WorkflowEngine`. The `RunExecutor` remains entirely agnostic to which middleware is being used.
+*   **`astream` Usage:** LangGraph's `astream` feature is used in `engine/workflow_engine.py` and `server/run_manager.py` to iterate through the graph's execution steps and allow middleware interception.
+*   **Current Middleware Injection:** Middleware is passed to `WorkflowEngine` during its initialization. The selection mechanism needs refinement.
+*   **`RunExecutor`'s Manual Logic:** `RunExecutor` in `server/run_manager.py` previously handled manual wait states and signaling (`_manual_input_event`), which has now been removed.
+*   **Graph Builder Divergence:** `engine/graph_builder.py` previously defined different graph structures and routing logic for manual vs. automatic modes. The manual-specific logic has been removed, unifying the graph construction for automatic execution.
+*   **Data Model Structure:** `models_v2.py` defines core models (`AttackData`, `DefenceData`, `EvaluationData`, `RunModel`), and consolidated manual interaction models (`ManualTurn`, `ManualSession`). These models are now normalized and reference each other via IDs, with manual-specific execution logic removed.
 
-### Problem 5: Database Structure for Manual Runs
-**Current State:** The current models (`RunModel`, `ManualSession`, `ManualTurn`) need to be mapped correctly without duplicating the core v2.5 models (Attack, Defence, Evaluation).
-**Solution: The Session "Chat Thread" Mapping Layer.**
-*   **Re-use Core Models:** Continue using the existing `v2.5` Attack, Defence, and Evaluation models for all modes.
-*   **The Session Paradigm:** Introduce/refine the `Session` concept. A Session acts as a sequence of interactions (like a chat thread).
-*   **Data Hierarchy:**
-    *   **Run:** The overarching container (1 Run -> Many Sessions).
-    *   **Session:** Contains its own `Session ID`, stores a reference to its parent `Run ID`, and holds a list of Turns.
-    *   **Turn:** A single tuple consisting of pointers to one Attack, Defence, and Evaluation step. 
-*   **Reference Direction:** The Run does not store its Sessions. Sessions reference the Run ID. This ensures clean, queryable relationships without heavy nested objects.
+## Accomplished
 
+*   **Analysis:** Codebase analyzed for state management, database models, workflow engine, graph builder, and run manager logic.
+*   **Documentation:** `CLEANING_CODEBASE_TASK.md` updated to reflect refactoring, including the removal of manual input handling and model normalization.
+*   **Model Refactoring:** `models_v2.py` refactored to consolidate manual models, normalize references, and remove manual input handling fields. `RunModel` and `ManualTurn` were cleaned.
+*   **Codebase Refactoring:** Manual-specific logic and routing removed from `engine/workflow_engine.py` (minor cleanup), `engine/graph_builder.py`, and `server/run_manager.py`.
+*   **File Cleanup:** `manual_models.py` was deleted.
+*   **Commit:** Changes related to model and code refactoring were committed.
 
+**Work In Progress:** None.
 
+**Work Left:**
+*   Final review of all removed and modified code to ensure no manual input/execution logic remains.
+*   Confirm that `ManualTurn` and `ManualSession` models are correctly used for data storage and not for execution flow control.
 
+## Relevant files / directories
 
-
-<!-- # Architecture Refactoring Plan: Codebase Cleaning Tasks
-
-This document outlines the identified problems in the current codebase and proposes actionable solutions for refactoring, focusing on decoupling, clarifying responsibilities, and adhering to a stateless request-response model for manual operations.
-
-## Core Architectural Principles:
-
-1.  **Stateless Request-Response for Manual Operations:** Manual runs are treated as single API request-response cycles. The graph executes one iteration, persists data, and returns. Subsequent manual interactions require new API calls.
-2.  **Strategy-Driven Flow:** The `Strategy` object dictates the graph's execution behavior (continuous looping vs. single iteration) and routing decisions.
-3.  **Clear Separation of Concerns:** 
-    *   **RunExecutor/RunManager:** Manage run lifecycle, initialize `WorkflowEngine`; unaware of manual vs. automatic mode specifics.
-    *   **WorkflowEngine:** Orchestrates graph execution via `astream`, manages middleware invocation.
-    *   **GraphBuilder:** Constructs the graph topology, injects nodes and middleware based on `GraphConfig` and `Strategy`.
-    *   **Middleware:** Exclusively handle persistence (`DatabaseMiddleware`) and event broadcasting (`WebSocketMiddleware`).
-    *   **Nodes:** Perform specific actions within a graph step.
-4.  **Middleware Selection Factory:** A factory (or GraphBuilder) injects appropriate middleware based on the `Strategy` and `GraphConfig`.
-
+*   **Modified:**
+    *   `engine/workflow_engine.py` (minor cleanup)
+    *   `engine/graph_builder.py`
+    *   `server/run_manager.py`
+    *   `server/database/models_v2.py`
+    *   `CLEANING_CODEBASE_TASK.md`
+*   **Deleted:**
+    *   `server/database/manual_models.py`
+*   **Relevant Directories:**
+    *   `.worktrees/v2/engine/`
+    *   `.worktrees/v2/server/database/`
+    *   `.worktrees/v2/server/`
 ---
-
-## Identified Problems and Proposed Solutions:
-
-### 1. RunExecutor and RunManager Overloaded with Manual Flow Logic
-
-*   **Problem:** These components currently handle manual attack logic, waiting, pausing, input management, and direct event emissions, violating separation of concerns.
-*   **Current State:** Logic for manual waits (`_handle_manual_wait`), input providing (`provide_manual_input`), and direct WebSocket calls are present.
-*   **Proposed Solution:
-    *   **Remove Manual Logic:** Delete all code related to manual input handling, waiting states, and direct event emissions from `RunExecutor` and `RunManager`.
-    *   **Enforce Statelessness:** Ensure these components only facilitate the standard request-response flow, initializing the `WorkflowEngine` and starting the graph execution (`astream`).
-    *   **Refined Flow (Stateless Manual):
-        1.  API Call → RunManager → RunExecutor → WorkflowEngine (configures graph with state/strategy).
-        2.  WorkflowEngine uses `astream` to execute ONE graph iteration as dictated by the strategy.
-        3.  Middleware persists data and broadcasts events for that iteration.
-        4.  Graph execution completes; WorkflowEngine returns iteration result.
-        5.  RunExecutor signals iteration completion; API returns response.
-        6.  Next manual step requires a new API call. The 'pause' is implicit. -->
