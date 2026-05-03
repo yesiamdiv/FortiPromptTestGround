@@ -1,4 +1,3 @@
-
 """
 Registry for Nodes and Strategies
 """
@@ -9,15 +8,17 @@ from typing import Dict, Any, Callable, Type
 from nodes.base import BaseAdversarialNode, StrategyProxyNode
 from nodes.default_nodes import create_default_nodes # Factory for default nodes
 from nodes.strategy_attack_node import StrategyDrivenAttackNode
-from nodes.manual_attack_node import ManualAttackNode
 from nodes.ensemble_defence_node import EnsembleDefenceNode
 from nodes.server_eval_node import ServerEvalNode
 from nodes.llm_eval_node import LLMEvalNode
-from nodes.strategy_router_node import StrategyRouterNode
+from nodes.router_node import RouterNode
 
 # Import strategy classes
 from strategies.default_strategy import DefaultStrategy
 from strategies.iterative_improvement_strategy import IterativeImprovementStrategy
+
+# Import provider registry and registration function
+from engine.provider_registry import get_provider_registry, register_all_providers
 
 
 # --- Node Registry ---
@@ -90,16 +91,13 @@ def register_all_components():
     """
     
     # Register Nodes
-    # Default nodes from default_nodes.py are instantiated once here
     default_nodes_instance = create_default_nodes()
     _node_registry.register("default_attack", lambda **k: default_nodes_instance["attack"])
     _node_registry.register("default_defense", lambda **k: default_nodes_instance["defence"])
     _node_registry.register("default_eval", lambda **k: default_nodes_instance["eval"])
     
-    # Specific Nodes
-    _node_registry.register("strategy_router", lambda **k: StrategyRouterNode(**k))
+    _node_registry.register("router", lambda **k: RouterNode(**k))
     _node_registry.register("strategy_attack", lambda **k: StrategyDrivenAttackNode(**k))
-    _node_registry.register("manual_attack", lambda **k: ManualAttackNode(**k))
     _node_registry.register("ensemble_defense", lambda **k: EnsembleDefenceNode(**k))
     _node_registry.register("server_eval", lambda **k: ServerEvalNode(**k))
     _node_registry.register("llm_eval", lambda **k: LLMEvalNode(**k))
@@ -107,8 +105,10 @@ def register_all_components():
     # Register Strategies
     _strategy_registry.register("default", DefaultStrategy)
     _strategy_registry.register("iterative_improvement", IterativeImprovementStrategy)
+    
+    # Register Providers (call the registration function)
+    register_all_providers()
 
 # It's recommended to call register_all_components() during application startup.
 # For example, in server/main.py's lifespan context:
 # await register_all_components()
-

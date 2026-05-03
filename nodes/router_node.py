@@ -1,4 +1,3 @@
-
 """
 Router Node
 
@@ -34,26 +33,25 @@ class RouterNode(StrategyProxyNode):
             Updated state with the routing signal determined by the strategy.
         """
         try:
-            # Access strategy directly from self.config, as it's baked in during node instantiation
             strategy = self.config.get('strategy')
             if not strategy:
                 raise AttributeError("Strategy instance not found in node's self.config.")
             
-            # Delegate to strategy's route method, passing state and runtime_config if needed by strategy
-            # For now, only state is passed as per strategy interface.
-            routing_signal = strategy.route(state)
+            routing_result = strategy.route(state)
             
-            if not isinstance(routing_signal, str):
-                raise TypeError("Strategy's route method must return a string routing signal.")
+            if not isinstance(routing_result, dict):
+                raise TypeError("Strategy's route method must return a dictionary with 'routing_signal' and 'strategy_context'.")
             
-            # Return the routing signal to be placed in the state
-            return {"routing_signal": routing_signal}
+            if "routing_signal" not in routing_result or "strategy_context" not in routing_result:
+                raise ValueError("Strategy's route method must return a dictionary containing 'routing_signal' and 'strategy_context'.")
+
+            return routing_result
             
         except AttributeError as e:
             raise AttributeError(f"Strategy error: {e}")
-        except TypeError as e:
-            raise TypeError(f"Error in strategy routing method: {e}")
+        except (TypeError, ValueError) as e:
+            print(f"Error in strategy routing method: {e}")
+            return {"routing_signal": RoutingSignals.END, "strategy_context": {}}
         except Exception as e:
-            print(f"Error during routing: {e}")
-            # Default to END on error for safety
-            return {"routing_signal": RoutingSignals.END}
+            print(f"Unexpected error during routing: {e}")
+            return {"routing_signal": RoutingSignals.END, "strategy_context": {}}

@@ -16,7 +16,7 @@ class BaseNodeConfig(BaseModel):
 class AttackNodeConfig(BaseNodeConfig):
     node_type: Literal["llm_attack", "heuristic_attack", "manual_attack", "default_attack"] = Field(..., description="Type of attack node")
     # Keep max_attempts_per_turn for attack node configuration
-    max_attempts_per_turn: Optional[int] = Field(None, description="Maximum attack attempts in a single turn/iteration")
+    # max_attempts_per_turn: Optional[int] = Field(None, description="Maximum attack attempts in a single turn/iteration")
 
 class DefenseNodeConfig(BaseNodeConfig):
     node_type: Literal["llm_defense", "heuristic_defense", "default_defense"] = Field(..., description="Type of defense node")
@@ -44,7 +44,7 @@ class GraphConfig(BaseModel):
     strategy_config: StrategyConfig = Field(..., description="Configuration for the chosen strategy")
     
     # General graph parameters
-    max_total_iterations: Optional[int] = Field(None, description="Maximum iterations for the entire run")
+    # max_total_iterations: Optional[int] = Field(None, description="Maximum iterations for the entire run")
     
     class Config:
         json_schema_extra = {
