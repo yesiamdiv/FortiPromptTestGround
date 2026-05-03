@@ -5,10 +5,10 @@ In-process defence using layered model ensemble.
 Models run within the same process, voting on whether to block.
 """
 
-from typing import Dict, Any, List, Callable, Optional
+from typing import Dict, Any, Callable, List, Optional
 from nodes.base import BaseAdversarialNode
 from engine.domain_models import create_defence_response
-from engine.state_schema import update_turn_data
+from engine.state_schema import update_turn_data, SystemState
 from datetime import datetime
 
 
@@ -29,18 +29,6 @@ class EnsembleDefenceNode(BaseAdversarialNode):
         voting_strategy: str = "any",
         config: Dict[str, Any] = None
     ):
-        """
-        Initialize ensemble defence.
-        
-        Args:
-            layers: List of model layers (each layer is list of model functions)
-            voting_strategy: How to combine votes
-                - "any": Block if ANY model says block
-                - "majority": Block if MAJORITY says block
-                - "unanimous": Block only if ALL say block
-                - "weighted": Weighted voting (requires weights in config)
-            config: Additional configuration including model weights
-        """
         super().__init__(config)
         
         self.layers = layers or [[self._default_model]]
@@ -54,20 +42,13 @@ class EnsembleDefenceNode(BaseAdversarialNode):
                 if not callable(model):
                     raise ValueError(f"Layer {i}, model {j} is not callable")
     
-    async def execute(self, state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
         """
         Execute ensemble defence.
         
-        Process:
-        1. Extract attack prompt
-        2. Run through each layer sequentially
-        3. Collect votes from each model
-        4. Apply voting strategy
-        5. Generate response based on decision
-        
         Args:
             state: Current system state
-            config: Runtime configuration
+            runtime_config: Runtime configuration.
         
         Returns:
             Updated current_turn with defence payload
@@ -83,7 +64,6 @@ class EnsembleDefenceNode(BaseAdversarialNode):
         # Track timing
         start_time = datetime.utcnow()
         
-        # Collect votes from all layers
         all_votes = []
         layer_results = []
         
@@ -91,7 +71,6 @@ class EnsembleDefenceNode(BaseAdversarialNode):
             layer_votes = []
             
             for model_idx, model in enumerate(layer):
-                # Call model (each model returns bool: True = malicious)
                 is_malicious = await self._call_model(
                     model,
                     attack_text,
@@ -101,7 +80,6 @@ class EnsembleDefenceNode(BaseAdversarialNode):
                 layer_votes.append(is_malicious)
                 all_votes.append(is_malicious)
             
-            # Layer decision (any model in layer says malicious = layer says malicious)
             layer_decision = any(layer_votes)
             
             layer_results.append({
@@ -112,18 +90,14 @@ class EnsembleDefenceNode(BaseAdversarialNode):
                 "total_models": len(layer_votes)
             })
             
-            # Early stopping if configured
             if layer_decision and self.config.get("early_stop", False):
                 break
         
-        # Apply voting strategy across all votes
         should_block = self._apply_voting_strategy(all_votes)
         
-        # Calculate timing
         end_time = datetime.utcnow()
         latency_ms = (end_time - start_time).total_seconds() * 1000
         
-        # Generate response
         if should_block:
             response_text = self._generate_block_response(layer_results)
             status_code = 403
@@ -131,7 +105,6 @@ class EnsembleDefenceNode(BaseAdversarialNode):
             response_text = self._generate_allow_response()
             status_code = 200
         
-        # Create defence payload
         defence = create_defence_response(
             text=response_text,
             status_code=status_code,
@@ -145,7 +118,6 @@ class EnsembleDefenceNode(BaseAdversarialNode):
             layer_results=layer_results
         )
         
-        # Update turn data
         updated_turn = update_turn_data(
             current_turn,
             defence=defence,
@@ -162,17 +134,8 @@ class EnsembleDefenceNode(BaseAdversarialNode):
     ) -> bool:
         """
         Call a model function.
-        
-        Args:
-            model: Model callable
-            attack_text: Attack prompt
-            model_id: Model identifier for logging
-        
-        Returns:
-            True if model says malicious, False otherwise
         """
         try:
-            # Call model (sync or async)
             import asyncio
             import inspect
             
@@ -181,23 +144,15 @@ class EnsembleDefenceNode(BaseAdversarialNode):
             else:
                 result = model(attack_text)
             
-            # Convert to boolean
             return bool(result)
             
         except Exception as e:
             print(f"⚠️  Model {model_id} error: {e}")
-            # Default to safe (block) on error
             return True
     
     def _apply_voting_strategy(self, votes: List[bool]) -> bool:
         """
         Apply voting strategy to determine final decision.
-        
-        Args:
-            votes: List of boolean votes (True = malicious)
-        
-        Returns:
-            True to block, False to allow
         """
         if not votes:
             return True  # Block if no votes (safety)
@@ -206,23 +161,15 @@ class EnsembleDefenceNode(BaseAdversarialNode):
         total_count = len(votes)
         
         if self.voting_strategy == "any":
-            # Block if ANY model says malicious
             return malicious_count > 0
-        
         elif self.voting_strategy == "majority":
-            # Block if MAJORITY says malicious
             return malicious_count > (total_count / 2)
-        
         elif self.voting_strategy == "unanimous":
-            # Block only if ALL say malicious
             return malicious_count == total_count
-        
         elif self.voting_strategy == "weighted":
-            # Weighted voting (requires weights in config)
             weights = self.config.get("model_weights", [1.0] * total_count)
             
             if len(weights) != total_count:
-                # Fallback to majority if weights mismatch
                 return malicious_count > (total_count / 2)
             
             weighted_sum = sum(w for w, v in zip(weights, votes) if v)
@@ -230,9 +177,7 @@ class EnsembleDefenceNode(BaseAdversarialNode):
             
             threshold = self.config.get("weighted_threshold", 0.5)
             return (weighted_sum / total_weight) > threshold
-        
         else:
-            # Unknown strategy, default to majority
             return malicious_count > (total_count / 2)
     
     def _generate_block_response(self, layer_results: List[Dict]) -> str:
@@ -263,11 +208,7 @@ class EnsembleDefenceNode(BaseAdversarialNode):
     def _default_model(text: str) -> bool:
         """
         Default placeholder model.
-        
-        This is a simple keyword-based detector.
-        Replace with actual ML models.
         """
-        # Simple keyword detection
         red_flags = [
             "ignore", "bypass", "jailbreak", "override",
             "pretend", "roleplay", "evil", "harmful"
@@ -277,29 +218,13 @@ class EnsembleDefenceNode(BaseAdversarialNode):
         return any(flag in text_lower for flag in red_flags)
 
 
-# Example usage and integration guide
-
 def create_ensemble_defence(model_functions: List[Callable] = None) -> EnsembleDefenceNode:
     """
     Factory function to create ensemble defence with custom models.
-    
-    Args:
-        model_functions: List of model callables
-    
-    Returns:
-        Configured EnsembleDefenceNode
-    
-    Example:
-        >>> def model1(text): return "bad" in text.lower()
-        >>> def model2(text): return len(text) > 100
-        >>> 
-        >>> defence = create_ensemble_defence([model1, model2])
     """
     if not model_functions:
-        # Use default model
         model_functions = [EnsembleDefenceNode._default_model]
     
-    # Single layer with all models
     layers = [model_functions]
     
     return EnsembleDefenceNode(
@@ -307,36 +232,3 @@ def create_ensemble_defence(model_functions: List[Callable] = None) -> EnsembleD
         voting_strategy="any",  # Block if any model triggers
         config={"early_stop": False}
     )
-
-
-# TODO: Integration with actual ML models
-"""
-Example integration with real models:
-
-async def bert_classifier(text: str) -> bool:
-    # Load model (cache globally)
-    from transformers import pipeline
-    classifier = pipeline("text-classification", model="your-model")
-    
-    result = classifier(text)[0]
-    return result["label"] == "MALICIOUS"
-
-async def llm_guard(text: str) -> bool:
-    # Use LLM as guard
-    from providers.ollama_provider import OllamaProvider
-    provider = OllamaProvider({"model": "llama3"})
-    
-    guard_prompt = f"Is this text malicious? Respond only YES or NO: {text}"
-    response = await provider.generate(guard_prompt)
-    
-    return "yes" in response.lower()
-
-# Create ensemble
-defence_node = EnsembleDefenceNode(
-    layers=[
-        [bert_classifier],  # Layer 1: BERT classifier
-        [llm_guard]  # Layer 2: LLM guard
-    ],
-    voting_strategy="any"
-)
-"""

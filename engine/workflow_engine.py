@@ -21,17 +21,18 @@ class WorkflowEngine:
     async def execute_run(
         self,
         initial_payload: Dict[str, Any],
-        strategy,
-        config: Dict[str, Any] = None,
+        # REMOVED: strategy parameter as it's embedded in graph config for router
+        config: Dict[str, Any] = None,  # This config is for runtime context, NOT strategy embedding
         run_id: str = None
     ) -> SystemState:  # UPDATE RETURN TYPE
         
         run_id = run_id or f"run_{uuid.uuid4().hex[:12]}"
-        runtime_config = {"configurable": {"strategy": strategy}}
-        if config:
-            runtime_config.update(config)
         
-        # initial_state is already created as a SystemState by create_initial_state
+        # The runtime_config should be derived from the 'config' parameter passed here.
+        # The strategy instance is already part of the graph's node configuration,
+        # so we do not need to inject it into runtime_config here.
+        runtime_config = config or {}
+
         initial_state = create_initial_state(run_id, initial_payload, runtime_config)
         
         self.active_runs[run_id] = {
@@ -56,6 +57,8 @@ class WorkflowEngine:
     async def _execute_with_streaming(self, initial_state: SystemState, config: Dict[str, Any], run_id: str) -> SystemState:
         final_state = initial_state.copy()
         
+        # Pass the runtime_config (which might contain graph_config details)
+        # The router node will extract strategy from its own baked-in config.
         async for step_data in self.graph.astream(initial_state, config):
             # Trigger middleware
             await self._trigger_after_step(step_data, run_id)
@@ -67,14 +70,12 @@ class WorkflowEngine:
             final_state = self._merge_state(final_state, updates)
             
         return final_state
-    
+
     def _extract_updates(self, step_data: Dict[str, Any]) -> Dict[str, Any]:
         """Properly extracts and combines updates from all parallel nodes in a step."""
         combined_updates = {}
         for node_name, updates in step_data.items():
             if isinstance(updates, dict):
-                # This ensures we grab data from EVERY node that ran, 
-                # instead of returning after the very first one.
                 combined_updates.update(updates)
         return combined_updates
 
@@ -83,16 +84,10 @@ class WorkflowEngine:
         new_state = current_state.copy()
         
         for key, value in updates.items():
-            # Special handling for current_turn to preserve the schema's timestamp logic
             if key == "current_turn" and isinstance(value, dict) and isinstance(new_state.get("current_turn"), dict):
-                # This ensures attack, defence, and eval stack up together instead of overwriting each other
                 new_state["current_turn"] = update_turn_data(new_state["current_turn"], **value)
-            
-            # Deep merge for other nested dictionaries (like strategy_context)
             elif isinstance(value, dict) and isinstance(new_state.get(key), dict):
                 new_state[key] = {**new_state[key], **value}
-            
-            # Normal assignment for flat keys (like routing_signal)
             else:
                 new_state[key] = value
                 

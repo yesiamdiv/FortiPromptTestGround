@@ -9,7 +9,7 @@ import httpx
 from datetime import datetime
 from nodes.base import BaseAdversarialNode
 from engine.domain_models import create_defence_response
-from engine.state_schema import update_turn_data
+from engine.state_schema import update_turn_data, SystemState
 
 
 class HTTPDefenceNode(BaseAdversarialNode):
@@ -24,21 +24,11 @@ class HTTPDefenceNode(BaseAdversarialNode):
         headers: Optional[Dict[str, str]] = None,
         config: Dict[str, Any] = None
     ):
-        """
-        Initialize with target API configuration.
-        
-        Args:
-            base_url: Base URL of the target system
-            api_key: Optional API key for authentication
-            headers: Optional default headers to include
-            config: Additional configuration
-        """
         super().__init__(config)
         self.base_url = base_url.rstrip('/')
         self.api_key = api_key
         self.default_headers = headers or {}
         
-        # Add API key to headers if provided
         if self.api_key:
             self.default_headers["Authorization"] = f"Bearer {self.api_key}"
         
@@ -48,18 +38,18 @@ class HTTPDefenceNode(BaseAdversarialNode):
         """Get or create async HTTP client"""
         if self._client is None:
             self._client = httpx.AsyncClient(
-                timeout=30.0,
+                timeout=self.config.get("timeout", 30.0),
                 follow_redirects=True
             )
         return self._client
     
-    async def execute(self, state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
         """
         Send attack to target system and capture response.
         
         Args:
             state: Current system state
-            config: Runtime configuration
+            runtime_config: Runtime configuration.
         
         Returns:
             Updated current_turn with defence payload
@@ -97,7 +87,6 @@ class HTTPDefenceNode(BaseAdversarialNode):
             end_time = datetime.utcnow()
             latency_ms = (end_time - start_time).total_seconds() * 1000
             
-            # Create defence payload
             defence = create_defence_response(
                 text=response.text,
                 status_code=response.status_code,
@@ -108,7 +97,6 @@ class HTTPDefenceNode(BaseAdversarialNode):
             )
             
         except httpx.TimeoutException as e:
-            # Handle timeout
             end_time = datetime.utcnow()
             latency_ms = (end_time - start_time).total_seconds() * 1000
             
@@ -122,7 +110,6 @@ class HTTPDefenceNode(BaseAdversarialNode):
             )
             
         except httpx.RequestError as e:
-            # Handle connection errors
             end_time = datetime.utcnow()
             latency_ms = (end_time - start_time).total_seconds() * 1000
             
@@ -144,44 +131,12 @@ class HTTPDefenceNode(BaseAdversarialNode):
         
         return {"current_turn": updated_turn}
     
-    def _format_request(self, attack, state: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Format the attack into a request payload.
-        
-        Override this for custom request formats.
-        
-        Args:
-            attack: AttackPayload instance
-            state: Current system state
-        
-        Returns:
-            Request payload dictionary
-        """
-        # Default format: simple message
-        format_type = self.config.get("format", "simple")
-        
-        if format_type == "simple":
-            return {
-                "message": attack.to_string()
-            }
-        elif format_type == "chat":
-            return {
-                "messages": attack.to_messages()
-            }
-        elif format_type == "custom":
-            # Allow custom formatting
-            return attack.to_api_format()
-        else:
-            return {
-                "prompt": attack.to_string()
-            }
-    
     async def cleanup(self):
         """Close the HTTP client"""
         if self._client:
             await self._client.aclose()
             self._client = None
-
+        
 
 class OpenAIDefenceNode(HTTPDefenceNode):
     """
@@ -189,14 +144,6 @@ class OpenAIDefenceNode(HTTPDefenceNode):
     """
     
     def __init__(self, api_key: str, model: str = "gpt-3.5-turbo", config: Dict[str, Any] = None):
-        """
-        Initialize for OpenAI API.
-        
-        Args:
-            api_key: OpenAI API key
-            model: Model to use
-            config: Additional configuration
-        """
         super().__init__(
             base_url="https://api.openai.com/v1",
             api_key=api_key,

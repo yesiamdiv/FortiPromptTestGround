@@ -5,57 +5,62 @@ The user wants to refactor the codebase for cleaning and improving the architect
 
 ## Instructions
 
-- The user wants to divide the application into a "frame" (core structure) and "pieces" (functional components).
-- Key problems identified include:
-    1. Run Executor and Run Manager are overloaded with manual flow logic.
-    2. Graph Builder has mode-specific (manual/automatic) edges and routing logic.
-    3. Ambiguity exists around where graph streaming (`astream`) and middleware management should reside.
-    4. Data models need to correctly represent sessions and their relationship with runs, especially for manual interactions.
-    5. Middleware should be exclusively responsible for persistence and event handling.
-- **Revised Core Principles:**
-    *   Manual runs should be stateless request-response cycles.
-    *   The `Strategy` object should dictate graph flow (looping vs. single iteration) and routing.
-    *   `RunExecutor`/`RunManager` should be unaware of manual vs. automatic modes.
-    *   `WorkflowEngine` orchestrates `astream` and middleware invocation.
-    *   `GraphBuilder` constructs the graph and injects middleware via a factory or itself.
-    *   Middleware handles persistence and broadcasting exclusively.
-- **Clarification:** The user explicitly stated that all code related to *manual input*, *manual attacks*, and *live manual sessions* within the execution flow must be removed. The `ManualTurn` and `ManualSession` data models should be retained in `models_v2.py` for data storage purposes, but not for live execution control.
+- The application is divided into a "frame" (core structure) and "pieces" (functional components).
+- **Frame:** `WorkflowEngine`, `RunManager`, `RunExecutor`, `GraphBuilder` (core orchestration, state management, graph construction).
+- **Pieces:** Nodes, Middleware, Strategies (functional components).
+- **Refactoring Focus:**
+    1. **Remove Manual Execution Logic:** Eliminate code related to live manual input, pauses, and sessions from the execution flow.
+    2. **Simplify Configuration:** Centralize strategy retrieval and configuration passing, removing redundancies.
+    3. **Type Safety:** Utilize `SystemState` for state management throughout the graph.
+    4. **Clean Node Implementations:** Ensure nodes correctly interact with `SystemState`, strategy, and use simplified config access.
 
-## Discoveries
+## Discoveries & Accomplishments
 
-*   **`astream` Usage:** LangGraph's `astream` feature is used in `engine/workflow_engine.py` and `server/run_manager.py` to iterate through the graph's execution steps and allow middleware interception.
-*   **Current Middleware Injection:** Middleware is passed to `WorkflowEngine` during its initialization. The selection mechanism needs refinement.
-*   **`RunExecutor`'s Manual Logic:** `RunExecutor` in `server/run_manager.py` previously handled manual wait states and signaling (`_manual_input_event`), which has now been removed.
-*   **Graph Builder Divergence:** `engine/graph_builder.py` previously defined different graph structures and routing logic for manual vs. automatic modes. The manual-specific logic has been removed, unifying the graph construction for automatic execution.
-*   **Data Model Structure:** `models_v2.py` defines core models (`AttackData`, `DefenceData`, `EvaluationData`, `RunModel`), and consolidated manual interaction models (`ManualTurn`, `ManualSession`). These models are now normalized and reference each other via IDs, with manual-specific execution logic removed.
+*   **Frame Refactoring Complete:**
+    *   **Database Models:** `models_v2.py` consolidated and normalized. `manual_models.py` removed. Core models preserved, manual interaction models normalized with reference IDs.
+    *   **Workflow Engine:** Fixed state merging bugs, properly handles `astream`, middleware, and uses `SystemState` typing.
+    *   **Graph Builder:** Unified routing, removed manual flow logic, renamed router node to `router`, correctly injects strategy instance into router config, and uses `SystemState` typing.
+    *   **Run Manager/Executor:** Removed all manual input/control logic. Correctly handles configuration fetching and payload passing. Correctly delegates execution to `WorkflowEngine`. Simplified status management. Added dynamic middleware setup based on execution mode (though now simplified to base middlewares).
+    *   **Type Safety:** `SystemState` is now consistently used across `WorkflowEngine`, `GraphBuilder`, and Nodes.
 
-## Accomplished
-
-*   **Analysis:** Codebase analyzed for state management, database models, workflow engine, graph builder, and run manager logic.
-*   **Documentation:** `CLEANING_CODEBASE_TASK.md` updated to reflect refactoring, including the removal of manual input handling and model normalization.
-*   **Model Refactoring:** `models_v2.py` refactored to consolidate manual models, normalize references, and remove manual input handling fields. `RunModel` and `ManualTurn` were cleaned.
-*   **Codebase Refactoring:** Manual-specific logic and routing removed from `engine/workflow_engine.py` (minor cleanup), `engine/graph_builder.py`, and `server/run_manager.py`.
-*   **File Cleanup:** `manual_models.py` was deleted.
-*   **Commit:** Changes related to model and code refactoring were committed.
+*   **Pieces Refactoring (Nodes):**
+    *   **`manual_attack_node.py`:** Removed, as manual input handling is eliminated from the execution flow.
+    *   **`strategy_router_node.py`:** Refactored into `router_node.py`. Now delegates solely to `strategy.route(state)` and accesses strategy from `self.config`.
+    *   **`nodes/default_nodes.py`:** Updated `DefaultInitNode` to call `strategy.initialize()`. Updated `DefaultRouterNode` (now `RouterNode`) to use `strategy.route()` and delegate correctly. Registered `RouterNode` under "router".
+    *   **`LLMAttackNode`:** Updated to use `runtime_config` and access strategy via `self.config`.
+    *   **`HTTPDefenceNode`, `EnsembleDefenceNode`, `ServerEvalNode`, `LLMEvalNode`:** Updated to use `runtime_config` in their `execute` methods.
 
 **Work In Progress:** None.
 
 **Work Left:**
-*   Final review of all removed and modified code to ensure no manual input/execution logic remains.
-*   Confirm that `ManualTurn` and `ManualSession` models are correctly used for data storage and not for execution flow control.
+*   **Middleware Refinement:** Review and potentially refactor middleware implementations (`LoggingMiddleware`, `DatabaseMiddlewareV2`) to ensure they correctly interact with `SystemState` and the refined configuration.
+*   **Strategy Implementation:** Fully implement `initialize()` and `route()` methods for specific strategies (e.g., `DefaultStrategy`, `IterativeImprovementStrategy`) to utilize `SystemState` and simplified config.
+*   **Node Implementations:** Ensure all nodes correctly read from and write to `SystemState['current_turn']` and `SystemState['strategy_context']` based on their specific functions.
+*   **Server/API Layer:** Address the server and API endpoint structure and access. This includes how manual runs (if any remain for data logging purposes) are handled at the API level.
 
 ## Relevant files / directories
 
 *   **Modified:**
-    *   `engine/workflow_engine.py` (minor cleanup)
+    *   `engine/workflow_engine.py`
     *   `engine/graph_builder.py`
     *   `server/run_manager.py`
     *   `server/database/models_v2.py`
-    *   `CLEANING_CODEBASE_TASK.md`
+    *   `nodes/base.py`
+    *   `nodes/default_nodes.py`
+    *   `nodes/router_node.py`
+    *   `nodes/llm_attack_node.py`
+    *   `nodes/http_defence_node.py`
+    *   `nodes/ensemble_defence_node.py`
+    *   `nodes/server_eval_node.py`
+    *   `nodes/llm_eval_node.py`
 *   **Deleted:**
+    *   `nodes/manual_attack_node.py`
+    *   `nodes/strategy_router_node.py`
     *   `server/database/manual_models.py`
 *   **Relevant Directories:**
     *   `.worktrees/v2/engine/`
     *   `.worktrees/v2/server/database/`
     *   `.worktrees/v2/server/`
+    *   `.worktrees/v2/nodes/`
+    *   `.worktrees/v2/strategies/`
 ---
