@@ -54,13 +54,13 @@ class IterativeImprovementStrategy(AttackStrategy):
         self.provider = provider
         self._load_prompts()
     
-    def setup(self, initial_payload: Dict[str, Any]) -> Dict[str, Any]:
+    def setup(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Initialize strategy context.
         
         Sets up tracking for iterations, scores, and attack history.
         """
-        intent = initial_payload.get("intent", "unknown intent")
+        intent = payload.get("intent", "unknown intent")
         
         return {
             "strategy_context": {
@@ -95,10 +95,10 @@ class IterativeImprovementStrategy(AttackStrategy):
         
         # If the strategy needs to perform setup based on initial payload or config,
         # it can be done here.
-        # Example: Load initial attack prompt if provided in initial_payload
-        if 'initial_attack_prompt' in state.get('initial_payload', {}):
+        # Example: Load initial attack prompt if provided in payload
+        if 'initial_attack_prompt' in state.get('payload', {}):
             context = state.get('strategy_context', {{}})
-            context['initial_attack_prompt'] = state['initial_payload']['initial_attack_prompt']
+            context['initial_attack_prompt'] = state['payload']['initial_attack_prompt']
             state['strategy_context'] = context
             
         return state

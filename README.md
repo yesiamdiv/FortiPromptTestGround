@@ -57,7 +57,7 @@ async def main():
     
     # Execute adversarial run
     result = await engine.execute_run(
-        initial_payload={
+        payload={
             "intent": "Test jailbreak resistance",
             "target": "my-ai-system"
         },
@@ -176,7 +176,7 @@ from engine.domain_models import create_simple_attack
 from engine.state_schema import create_turn_data
 
 class MyStrategy(AttackStrategy):
-    def setup(self, initial_payload):
+    def setup(self, payload):
         return {
             "strategy_context": {
                 "attempt_count": 0,

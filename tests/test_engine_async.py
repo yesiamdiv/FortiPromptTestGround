@@ -24,7 +24,7 @@ async def test_basic_execution():
     
     # Execute
     result = await engine.execute_run(
-        initial_payload={"intent": "Test basic execution"},
+        payload={"intent": "Test basic execution"},
         strategy=strategy
     )
     
@@ -52,7 +52,7 @@ async def test_with_custom_config():
     })
     
     result = await engine.execute_run(
-        initial_payload={
+        payload={
             "intent": "Test with custom config",
             "target": "test-system"
         },
@@ -77,7 +77,7 @@ async def test_early_stopping():
     strategy = DefaultStrategy({"max_attempts": 1})
     
     result = await engine.execute_run(
-        initial_payload={"intent": "Test early stopping"},
+        payload={"intent": "Test early stopping"},
         strategy=strategy
     )
     
@@ -99,7 +99,7 @@ async def test_evaluation_flow():
     strategy = DefaultStrategy({"max_attempts": 1})
     
     result = await engine.execute_run(
-        initial_payload={"intent": "Test evaluation"},
+        payload={"intent": "Test evaluation"},
         strategy=strategy
     )
     
@@ -133,7 +133,7 @@ async def test_multiple_runs():
     for i in range(3):
         strategy = DefaultStrategy({"max_attempts": 1})
         result = await engine.execute_run(
-            initial_payload={"intent": f"Test run {i+1}"},
+            payload={"intent": f"Test run {i+1}"},
             strategy=strategy
         )
         results.append(result)
@@ -157,7 +157,7 @@ async def test_strategy_context_persistence():
     strategy = DefaultStrategy({"max_attempts": 3})
     
     result = await engine.execute_run(
-        initial_payload={"intent": "Test context"},
+        payload={"intent": "Test context"},
         strategy=strategy
     )
     

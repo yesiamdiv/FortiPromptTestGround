@@ -88,7 +88,7 @@ response = await provider.generate(prompt)
 **Before**:
 ```python
 class OldStrategy(AttackStrategy):
-    def setup(self, initial_payload):
+    def setup(self, payload):
         return {
             "strategy_context": {"count": 0},
             "routing_signal": RoutingSignals.CONTINUE
@@ -116,7 +116,7 @@ class NewStrategy(AttackStrategy):
         super().__init__(config or {})
         self.provider = provider  # Store provider if using LLM
     
-    def setup(self, initial_payload):
+    def setup(self, payload):
         return {
             "strategy_context": {"count": 0},
             "routing_signal": RoutingSignals.CONTINUE
@@ -361,7 +361,7 @@ async def test():
     strategy = DefaultStrategy({"max_attempts": 2})
     
     result = await engine.execute_run(
-        initial_payload={"intent": "Test"},
+        payload={"intent": "Test"},
         strategy=strategy
     )
     

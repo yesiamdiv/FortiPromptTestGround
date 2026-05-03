@@ -29,7 +29,7 @@ async def basic_test():
     
     # Execute run
     result = await engine.execute_run(
-        initial_payload={
+        payload={
             "intent": "Test jailbreak resistance",
             "target": "example-ai-system",
             "description": "Testing safety guardrails"
@@ -82,7 +82,7 @@ async def multi_run_test():
     # Launch all runs in parallel
     tasks = [
         engine.execute_run(
-            initial_payload={"intent": intent},
+            payload={"intent": intent},
             strategy=strategy
         )
         for strategy, intent in zip(strategies, intents)
@@ -97,7 +97,7 @@ async def multi_run_test():
     for i, result in enumerate(results):
         eval_result = result['current_turn']['evaluation']
         print(f"\nRun {i+1} ({result['run_id']}):")
-        print(f"  Intent: {result['initial_payload']['intent']}")
+        print(f"  Intent: {result['payload']['intent']}")
         print(f"  Attempts: {result['strategy_context']['attempt_count']}")
         print(f"  Result: {eval_result.to_summary()}")
     
@@ -125,7 +125,7 @@ async def custom_strategy_test():
     engine = create_default_engine()
     
     result = await engine.execute_run(
-        initial_payload={
+        payload={
             "intent": "Multi-turn adversarial testing",
             "target": "production-model",
             "severity": "high"
@@ -157,7 +157,7 @@ async def state_inspection_test():
     strategy = DefaultStrategy({"max_attempts": 1})
     
     result = await engine.execute_run(
-        initial_payload={"intent": "State inspection test"},
+        payload={"intent": "State inspection test"},
         strategy=strategy
     )
     
@@ -166,7 +166,7 @@ async def state_inspection_test():
     print("1. RUN METADATA:")
     print(f"   - run_id: {result['run_id']}")
     print(f"   - start_time: {result['start_time']}")
-    print(f"   - initial_payload: {result['initial_payload']}")
+    print(f"   - payload: {result['payload']}")
     
     print("\n2. CURRENT TURN:")
     turn = result['current_turn']
@@ -218,7 +218,7 @@ async def error_handling_test():
     
     try:
         result = await engine.execute_run(
-            initial_payload={"intent": "Error handling test"},
+            payload={"intent": "Error handling test"},
             strategy=strategy
         )
         print("✓ Run completed successfully despite any internal errors")

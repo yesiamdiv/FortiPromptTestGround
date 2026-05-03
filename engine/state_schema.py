@@ -20,7 +20,7 @@ class SystemState(TypedDict, total=False):
     strategy_context: Dict[str, Any]
     routing_signal: str
     run_id: str
-    initial_payload: Dict[str, Any]
+    payload: Dict[str, Any]
     config: Dict[str, Any]
     start_time: str
 
@@ -32,11 +32,11 @@ class RoutingSignals:
     END = "__end__"
 
 
-def create_initial_state(run_id: str, initial_payload: Dict[str, Any], config: Dict[str, Any]) -> SystemState:
+def create_initial_state(run_id: str, payload: Dict[str, Any], config: Dict[str, Any]) -> SystemState:
     """Create a fresh SystemState for a new execution run"""
     return SystemState(
         run_id=run_id,
-        initial_payload=initial_payload,
+        payload=payload,
         config=config,
         start_time=datetime.utcnow().isoformat(),
         current_turn=TurnData(

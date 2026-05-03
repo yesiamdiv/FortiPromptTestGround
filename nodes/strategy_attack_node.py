@@ -49,10 +49,10 @@ class StrategyDrivenAttackNode(BaseAdversarialNode):
         Returns:
             Updated state with new attack payload
         """
-        # Get strategy from config
-        strategy = config["configurable"]["strategy"]
+        strategy:BaseAdversarialNode = self.config.get('strategy')
         
-        # Strategy does everything - LLM calls, processing, etc.
-        result = await strategy.execute_generation(state, config)
-        
+        if not strategy:
+            raise AttributeError("Strategy instance not found in Attack Node's config.")
+            
+        result = await strategy.execute(state, config)
         return result

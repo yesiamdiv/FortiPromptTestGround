@@ -70,7 +70,7 @@ engine = WorkflowEngine(
 )
 
 result = await engine.execute_run(
-    initial_payload={"intent": "test"},
+    payload={"intent": "test"},
     strategy=my_strategy
 )
 ```
@@ -107,7 +107,7 @@ from engine.state_schema import create_initial_state
 
 state = create_initial_state(
     run_id="run_123",
-    initial_payload={"intent": "test"},
+    payload={"intent": "test"},
     config={}
 )
 ```
