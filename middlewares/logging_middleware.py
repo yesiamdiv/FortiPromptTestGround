@@ -1,4 +1,5 @@
-"""Logging Middleware"""
+"""
+Logging Middleware"""
 
 from typing import Dict, Any
 from datetime import datetime
@@ -15,9 +16,12 @@ class LoggingMiddleware(BaseMiddleware):
         super().__init__(default_config)
         self.run_timings: Dict[str, float] = {}
     
-    async def before_run(self, initial_state, config, run_id):
+    async def before_run(self, initial_state: Dict[str, Any], config: Dict[str, Any], run_id: str):
         self.run_timings[run_id] = datetime.utcnow().timestamp()
-        strategy_name = config["configurable"]["strategy"].name
+        
+        # CORRECT WAY to read the strategy name from the embedded GraphConfig in initial_state
+        strategy_config = initial_state.get("config", {}).get("strategy_config", {})
+        strategy_name = strategy_config.get("strategy_name", "unknown_strategy")
         intent = initial_state.get("payload", {}).get("intent", "unknown")
         
         self._log(f"\n{'='*60}")
@@ -40,17 +44,18 @@ class LoggingMiddleware(BaseMiddleware):
             
             if turn.get("attack"):
                 attack = turn["attack"]
-                preview = attack.to_string()[:100]
+                preview = getattr(attack, 'to_string', lambda: 'N/A')()[:100]
                 self._log(f"   ⚔️  Attack: {preview}...")
             
             if turn.get("defence"):
                 defence = turn["defence"]
-                blocked = "🚫 BLOCKED" if defence.was_blocked() else "✅ ALLOWED"
+                blocked = "🚫 BLOCKED" if getattr(defence, 'was_blocked', lambda: False)() else "✅ ALLOWED"
                 self._log(f"   🛡️  Defence: {blocked}")
             
             if turn.get("evaluation"):
                 eval_result = turn["evaluation"]
-                self._log(f"   📊 Eval: {eval_result.to_summary()}")
+                summary = getattr(eval_result, 'to_summary', lambda: 'N/A')()
+                self._log(f"   📊 Eval: {summary}")
         
         if "routing_signal" in node_output:
             signal = node_output["routing_signal"]
@@ -71,7 +76,8 @@ class LoggingMiddleware(BaseMiddleware):
         
         if final_state.get("current_turn", {}).get("evaluation"):
             eval_result = final_state["current_turn"]["evaluation"]
-            self._log(f"   Final Result: {eval_result.to_summary()}")
+            summary = getattr(eval_result, 'to_summary', lambda: 'N/A')()
+            self._log(f"   Final Result: {summary}")
         
         self._log(f"{'='*60}\n")
     

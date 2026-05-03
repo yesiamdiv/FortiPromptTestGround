@@ -1,4 +1,3 @@
-
 """
 Workflow Engine - Core Orchestrator"""
 
@@ -7,7 +6,7 @@ import asyncio
 import uuid
 from datetime import datetime
 from middlewares.base import BaseMiddleware
-from engine.state_schema import SystemState, create_initial_state, update_turn_data # IMPORT SYSTEMSTATE
+from engine.state_schema import SystemState, create_initial_state, update_turn_data, RoutingSignals # IMPORT SYSTEMSTATE and RoutingSignals
 
 
 class WorkflowEngine:
@@ -21,19 +20,20 @@ class WorkflowEngine:
     async def execute_run(
         self,
         payload: Dict[str, Any],
-        # REMOVED: strategy parameter as it's embedded in graph config for router
-        config: Dict[str, Any] = None,  # This config is for runtime context, NOT strategy embedding
+        graph_config: Any,  # The structural GraphConfig (Pydantic model)
         run_id: str = None
     ) -> SystemState:  # UPDATE RETURN TYPE
         
         run_id = run_id or f"run_{uuid.uuid4().hex[:12]}"
         
-        # The runtime_config should be derived from the 'config' parameter passed here.
-        # The strategy instance is already part of the graph's node configuration,
-        # so we do not need to inject it into runtime_config here.
-        runtime_config = config or {}
+        # Extract the runtime_config from the payload
+        runtime_config = payload.pop("runtime_config", {})
+        
+        # Convert Pydantic graph_config to dict for the state
+        state_config_dict = graph_config.dict() if hasattr(graph_config, 'dict') else {}
 
-        initial_state = create_initial_state(run_id, payload, runtime_config)
+        # Create state using the structural config!
+        initial_state = create_initial_state(run_id, payload, state_config_dict)
         
         self.active_runs[run_id] = {
             "status": "running",
@@ -41,7 +41,9 @@ class WorkflowEngine:
         }
         
         try:
+            # Pass runtime_config directly to middlewares
             await self._trigger_before_run(initial_state, runtime_config, run_id)
+            # Stream uses the extracted runtime_config!
             final_state = await self._execute_with_streaming(initial_state, runtime_config, run_id)
             await self._trigger_after_run(final_state, run_id)
             
@@ -54,25 +56,19 @@ class WorkflowEngine:
             await self._trigger_error(e, run_id)
             raise
     
-    async def _execute_with_streaming(self, initial_state: SystemState, config: Dict[str, Any], run_id: str) -> SystemState:
+    async def _execute_with_streaming(self, initial_state: SystemState, runtime_config: Dict[str, Any], run_id: str) -> SystemState:
         final_state = initial_state.copy()
         
-        # Pass the runtime_config (which might contain graph_config details)
-        # The router node will extract strategy from its own baked-in config.
-        async for step_data in self.graph.astream(initial_state, config or {}):
-            # Trigger middleware
+        async for step_data in self.graph.astream(initial_state, runtime_config): # Use runtime_config here
             await self._trigger_after_step(step_data, run_id)
             
-            # Extract combined updates from all nodes that ran in this step
             updates = self._extract_updates(step_data)
             
-            # Properly deep-merge the updates into the final state
             final_state = self._merge_state(final_state, updates)
             
         return final_state
 
     def _extract_updates(self, step_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Properly extracts and combines updates from all parallel nodes in a step."""
         combined_updates = {}
         for node_name, updates in step_data.items():
             if isinstance(updates, dict):
@@ -80,7 +76,6 @@ class WorkflowEngine:
         return combined_updates
 
     def _merge_state(self, current_state: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
-        """Deep merges the state to prevent overwriting nested dictionaries."""
         new_state = current_state.copy()
         
         for key, value in updates.items():
@@ -93,8 +88,9 @@ class WorkflowEngine:
                 
         return new_state
 
-    async def _trigger_before_run(self, initial_state: SystemState, config, run_id):
-        tasks = [m.before_run(initial_state, config, run_id) for m in self.middlewares]
+    async def _trigger_before_run(self, initial_state: SystemState, runtime_config: Dict[str, Any], run_id: str):
+        # Clean and simple: Pass runtime_config directly
+        tasks = [m.before_run(initial_state, runtime_config, run_id) for m in self.middlewares]
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
     

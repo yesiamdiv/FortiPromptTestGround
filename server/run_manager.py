@@ -1,6 +1,5 @@
-
 """
-Run Manager - Final Integrated Version without Manual Input Handling"""
+Run Manager - Refactored for Middleware Factory Pattern and Correct Config Flow"""
 
 import asyncio
 from typing import Dict, Any, Optional, List
@@ -8,15 +7,20 @@ from datetime import datetime
 from enum import Enum
 
 from engine.workflow_engine import WorkflowEngine
-from engine.graph_builder import build_default_graph
-from engine.registry import get_node_registry, get_strategy_registry
+from engine.graph_builder import build_default_graph, ConfigurableGraphBuilder
+from engine.registry import get_node_registry, get_strategy_registry, get_provider_registry
 from middlewares.base import BaseMiddleware
 from middlewares.logging_middleware import LoggingMiddleware
-from middlewares.database_middleware_v2 import DatabaseMiddlewareV2
+from middlewares.automatic_database_middleware import AutomaticDatabaseMiddleware
+from middlewares.manual_database_middleware import ManualDatabaseMiddleware
+from middlewares.automatic_ws_middleware import AutomaticWSMiddleware
+from middlewares.manual_ws_middleware import ManualWSMiddleware
+
 from server.config.models import GraphConfig
 from engine.state_schema import create_initial_state, SystemState, RoutingSignals
 from server.database.connection import get_db
 from server.database.operations import get_db_ops
+from server.websocket.socketio_manager import SocketIOManager, get_socketio_manager # Import get_socketio_manager
 
 
 class RunStatus(str, Enum):
@@ -34,18 +38,9 @@ class RunExecutor:
         self.run_id = run_id
         self.graph_config = graph_config
         
-        # Build graph based on config (ensuring it's automatic)
-        self.graph = build_default_graph()
+        builder = ConfigurableGraphBuilder(self.graph_config)
+        self.graph = builder.compile()
         
-        # REMOVED: Strategy retrieval is now handled within ConfigurableGraphBuilder
-        # and passed to the router node during graph construction.
-        # strategy_registry = get_strategy_registry()
-        # self.strategy = strategy_registry.get(
-        #     graph_config.strategy_config.strategy_name,
-        #     config=graph_config.strategy_config.strategy_params
-        # )
-        
-        # Setup middlewares dynamically based on config. For now, using a base set.
         self.middlewares = self._setup_middlewares(graph_config)
         
         self.engine = WorkflowEngine(
@@ -61,11 +56,19 @@ class RunExecutor:
     def _setup_middlewares(self, config: GraphConfig) -> List[BaseMiddleware]:
         """Determine which middlewares to load based on the execution mode."""
         
-        middlewares = [
-            LoggingMiddleware({"verbose": False}),
-            DatabaseMiddlewareV2()
-        ]
+        middlewares = [LoggingMiddleware()]
         
+        if config.graph_type == "manual":
+            middlewares.extend([
+                ManualDatabaseMiddleware(),
+                ManualWSMiddleware(get_socketio_manager()) # Use global instance
+            ])
+        else:  # automatic or default
+            middlewares.extend([
+                AutomaticDatabaseMiddleware(),
+                AutomaticWSMiddleware(get_socketio_manager()) # Use global instance
+            ])
+            
         return middlewares
 
     async def _initialize_dependencies(self):
@@ -104,12 +107,11 @@ class RunExecutor:
         
         await self._initialize_dependencies() 
 
-        runtime_config = payload.pop("runtime_config", {})
-        
+        # Pass the full graph_config to the engine for initial state creation
         final_state = await self.engine.execute_run(
             payload=payload,
             run_id=self.run_id,
-            config=runtime_config
+            config=self.graph_config # Pass the structural graph_config
         )
         
         self._current_state = final_state
@@ -131,11 +133,9 @@ class RunExecutor:
             await self._update_db_status(RunStatus.STOPPED)
     
     def _extract_updates(self, step_data: Dict[str, Any]) -> Dict[str, Any]:
-        """This method is now part of WorkflowEngine and should not be here."""
         raise NotImplementedError("This method is deprecated. Use WorkflowEngine's extraction.")
 
     async def _trigger_middleware(self, method: str, *args):
-        """This method is now part of WorkflowEngine and should not be here."""
         raise NotImplementedError("This method is deprecated. Use WorkflowEngine's middleware triggering.")
 
     async def _update_db_status(self, status: RunStatus, error: str = None):
