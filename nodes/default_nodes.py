@@ -1,36 +1,48 @@
 
-"""Default Node Implementations"""
+"""
+Default Node Implementations"""
 
 from typing import Dict, Any
 import random
 from nodes.base import BaseAdversarialNode, StrategyProxyNode
 from engine.domain_models import create_defence_response, create_eval_result
-from engine.state_schema import update_turn_data
+from engine.state_schema import update_turn_data, SystemState, RoutingSignals
 
 
 class DefaultInitNode(StrategyProxyNode):
-    """Delegates to strategy.setup()"""
+    """Delegates to strategy.initialize()"""
     def get_strategy_method(self) -> str:
-        return "setup"
-
-    async def execute(self, state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+        return "initialize"
+    
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Execute the init node by delegating to strategy setup.
+        Execute the init node by delegating to strategy initialize.
         This ensures the strategy context is properly initialized.
         """
-        # Strategy setup might modify the state, so we pass it through.
-        # The strategy's setup method should return the modified state.
-        # We assume strategy.setup returns state updates relevant to strategy context.
-        strategy = config["configurable"]["strategy"]
-        strategy_setup_result = strategy.setup(state.get("initial_payload", {{}}))
+        strategy = self.config.get('strategy')
+        if not strategy:
+            raise AttributeError("Strategy instance not found in node's self.config.")
+            
+        # Call strategy's initialize method, passing the current state
+        strategy_init_result = strategy.initialize(state)
         
-        # Merge strategy context updates into the main state.
-        # Ensure state has strategy_context initialized.
+        # Merge the results from strategy.initialize into the current state.
         updated_state = state.copy()
-        updated_state["strategy_context"] = strategy_setup_result.get("strategy_context", {{}})
-        updated_state["routing_signal"] = strategy_setup_result.get("routing_signal", state.get("routing_signal"))
+        updated_state.update(strategy_init_result)
         
-        print(f"Init Node: Strategy setup complete. Context: {updated_state.get('strategy_context')}")
+        # Ensure strategy_context is properly set
+        if 'strategy_context' not in updated_state or not updated_state['strategy_context']:
+            strategy_name = self.config.get("strategy_name", "unknown_strategy") # Get strategy name from node config
+            updated_state['strategy_context'] = {
+                "strategy_params": strategy.config.get("strategy_params", {{}}),
+                "memory": {{}}, 
+                "strategy_name": strategy_name
+            }
+        else:
+            strategy_name = self.config.get("strategy_name", "unknown_strategy")
+            updated_state['strategy_context']['strategy_name'] = strategy_name
+
+        print(f"Init Node: Strategy initialization complete. Updated state context: {updated_state.get('strategy_context')}")
         return updated_state
 
 
@@ -38,6 +50,18 @@ class DefaultAttackNode(StrategyProxyNode):
     """Delegates to strategy.execute_generation()"""
     def get_strategy_method(self) -> str:
         return "execute_generation"
+
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute attack generation by delegating to strategy.
+        Ensures SystemState is used and config is passed correctly.
+        """
+        strategy = self.config.get('strategy')
+        if not strategy:
+            raise AttributeError("Strategy instance not found in node's self.config.")
+            
+        # Pass state and runtime_config to the strategy method
+        return await strategy.execute_generation(state, runtime_config)
 
 
 class DefaultDefenceNode(BaseAdversarialNode):
@@ -49,7 +73,7 @@ class DefaultDefenceNode(BaseAdversarialNode):
             default_config.update(config)
         super().__init__(default_config)
     
-    async def execute(self, state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
         current_turn = state.get("current_turn", {{}})
         is_blocked = random.random() < self.config.get("block_rate", 0.3)
         
@@ -89,7 +113,7 @@ class DefaultEvalNode(BaseAdversarialNode):
             default_config.update(config)
         super().__init__(default_config)
     
-    async def execute(self, state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
         current_turn = state.get("current_turn", {{}})
         defence = current_turn.get("defence")
         
@@ -113,10 +137,39 @@ class DefaultEvalNode(BaseAdversarialNode):
         return {"current_turn": updated_turn}
 
 
-class DefaultRouterNode(StrategyProxyNode):
-    """Delegates to strategy.process_end_of_loop()"""
+class RouterNode(StrategyProxyNode):
+    """Delegates to strategy.route()"""
     def get_strategy_method(self) -> str:
-        return "process_end_of_loop"
+        return "route"
+
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute the router node by delegating to the strategy's route method.
+        Ensures SystemState is used and config is passed correctly.
+        """
+        try:
+            # Access strategy directly from self.config, as it's baked in during node instantiation
+            strategy = self.config.get('strategy')
+            if not strategy:
+                raise AttributeError("Strategy instance not found in node's self.config.")
+            
+            # Delegate to strategy's route method, passing state and runtime_config if needed by strategy
+            routing_signal = strategy.route(state)
+            
+            if not isinstance(routing_signal, str):
+                raise TypeError("Strategy's route method must return a string routing signal.")
+            
+            # Return the routing signal to be placed in the state
+            return {"routing_signal": routing_signal}
+            
+        except AttributeError as e:
+            raise AttributeError(f"Strategy error: {e}")
+        except TypeError as e:
+            raise TypeError(f"Error in strategy routing method: {e}")
+        except Exception as e:
+            print(f"Error during routing: {e}")
+            # Default to END on error for safety
+            return {"routing_signal": RoutingSignals.END}
 
 
 def create_default_nodes(config: Dict[str, Any] = None) -> Dict[str, BaseAdversarialNode]:
@@ -127,5 +180,5 @@ def create_default_nodes(config: Dict[str, Any] = None) -> Dict[str, BaseAdversa
         "attack": DefaultAttackNode(node_config.get("attack", {{}})),
         "defence": DefaultDefenceNode(node_config.get("defence", {{}})),
         "eval": DefaultEvalNode(node_config.get("eval", {{}})),
-        "router": DefaultRouterNode(node_config.get("router", {{}})
+        "router": RouterNode(node_config.get("router", {{}})) # Use RouterNode
     }

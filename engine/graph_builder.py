@@ -58,12 +58,13 @@ class ConfigurableGraphBuilder:
             self.graph.add_node("eval", eval_node_instance.execute)
             
             # Instantiate Router Node
+            # Simplify config passed to node: directly include strategy, strategy_config, graph_type
             router_node_instance = self.node_registry.get(
-                "router", # Renamed from strategy_router
+                "router", 
                 config={
-                    "strategy_config": self.graph_config.strategy_config, # Pass strategy config to router
-                    "graph_type": self.graph_config.graph_type,
-                    "strategy": self.strategy # Pass the strategy instance itself
+                    "strategy": self.strategy, 
+                    "strategy_config": self.graph_config.strategy_config,
+                    "graph_type": self.graph_config.graph_type
                 }
             )
             self.graph.add_node("router", router_node_instance.execute)
@@ -75,17 +76,16 @@ class ConfigurableGraphBuilder:
         self.graph.set_entry_point("init") 
         self.graph.add_node("init", self._initialization_node)
 
-        # Automatic or default flow
-        # init -> router -> attack -> defence -> eval -> router
+        # Automatic or default flow: init -> router -> [attack/continue] -> defence -> eval -> router
         self.graph.add_edge("init", "router")
         
         # Edges from router:
         self.graph.add_conditional_edges(
             "router",
-            self.router_routing_logic, # Use the unified routing logic
+            self.router_routing_logic, 
             {
                 RoutingSignals.ATTACK: "attack",
-                RoutingSignals.CONTINUE: "attack", # Default to attack for continuous loops
+                RoutingSignals.CONTINUE: "attack", 
                 RoutingSignals.END: END
             }
         )
@@ -99,7 +99,6 @@ class ConfigurableGraphBuilder:
         
         # Ensure current_turn is initialized if not present
         if 'current_turn' not in state or state['current_turn'] is None:
-            # Use create_initial_state to get a properly formed TurnData object
             initial_state_temp = create_initial_state(state.get('run_id', 'unknown_run'), state.get('initial_payload', {}), state.get('config', {}))
             state['current_turn'] = initial_state_temp.get('current_turn')
         
@@ -118,8 +117,8 @@ class ConfigurableGraphBuilder:
             if 'strategy_context' not in state or not state['strategy_context']:
                  state['strategy_context'] = {
                     "strategy_params": self.graph_config.strategy_config.strategy_params,
-                    "memory": {{}}, # Placeholder for strategy-specific memory
-                    "strategy_name": self.graph_config.strategy_config.strategy_name # Store strategy name for reference
+                    "memory": {},
+                    "strategy_name": self.graph_config.strategy_config.strategy_name
                 }
             else:
                 # If strategy.initialize returned context, use it and ensure strategy name is present

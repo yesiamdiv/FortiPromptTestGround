@@ -1,3 +1,4 @@
+
 """
 Base Node Interface"""
 
@@ -14,7 +15,7 @@ class BaseAdversarialNode(ABC):
         self.node_type = self.__class__.__name__
     
     @abstractmethod
-    async def execute(self, state: SystemState, config: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
         """Execute the node's operation and return state updates"""
         raise NotImplementedError
     
@@ -22,11 +23,16 @@ class BaseAdversarialNode(ABC):
 class StrategyProxyNode(BaseAdversarialNode):
     """Base class for nodes that delegate to strategy methods"""
     
-    async def execute(self, state: SystemState, config: Dict[str, Any]) -> Dict[str, Any]:
-        strategy = config["configurable"]["strategy"]
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
+        # Access strategy directly from self.config as it's baked in during node instantiation
+        strategy = self.config.get('strategy')
+        if not strategy:
+            raise AttributeError("Strategy instance not found in node's self.config.")
+            
         method_name = self.get_strategy_method()
         method = getattr(strategy, method_name)
-        return method(state)
+        # Pass the state and any relevant runtime config if strategy needs it
+        return method(state, runtime_config)
     
     @abstractmethod
     def get_strategy_method(self) -> str:
