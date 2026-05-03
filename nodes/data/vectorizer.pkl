@@ -1,0 +1,1 @@
+copy D:\Development\BE Project\AgenticTestingGround\AgenticLLMAdversarialTestbed\.worktrees\v2\multilayer_defence\vectorizer.pkl to D:\Development\BE Project\AgenticTestingGround\AgenticLLMAdversarialTestbed\.worktrees\v2\nodes\data\vectorizer.pkl
