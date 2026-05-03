@@ -1,62 +1,47 @@
 """
-WebSocket Middleware - Refactored
+Automatic WebSocket Middleware
 
-Uses server/websocket/operations.py for actual WebSocket logic.
-Middleware only orchestrates - doesn't implement WebSocket operations.
+Handles broadcasting updates during automatic runs.
 """
 
 from typing import Dict, Any
 from middlewares.base import BaseMiddleware
 from server.websocket.socketio_manager import SocketIOManager
 from server.websocket.operations import get_ws_ops
+from engine.state_schema import SystemState, RoutingSignals
 
 
-class WebSocketMiddlewareV2(BaseMiddleware):
+class AutomaticWSMiddleware(BaseMiddleware):
     """
-    Refactored middleware using WebSocket operations module.
+    WebSocket middleware for automatic runs.
     
-    Broadcasts execution updates via Socket.IO.
+    Streams live updates of graph activity.
     """
     
     def __init__(self, socketio_manager: SocketIOManager, config: Dict[str, Any] = None):
-        """
-        Initialize WebSocket middleware.
-        
-        Args:
-            socketio_manager: Socket.IO manager instance
-            config: Configuration including:
-                - broadcast_attacks: Whether to broadcast attack data (default: True)
-                - broadcast_defences: Whether to broadcast defence data (default: True)
-                - broadcast_evaluations: Whether to broadcast evaluation data (default: True)
-        """
         default_config = {
             "broadcast_attacks": True,
             "broadcast_defences": True,
             "broadcast_evaluations": True
         }
-        
         if config:
             default_config.update(config)
-        
         super().__init__(default_config)
         
-        # Get operations instance
         self.ws_ops = get_ws_ops(socketio_manager)
-        self._iteration_counters = {}  # Track iteration numbers per run
-    
-    async def before_run(self, initial_state, config, run_id):
+
+    async def before_run(self, initial_state: SystemState, config: Dict[str, Any], run_id: str):
         """Broadcast run start event"""
         try:
-            strategy = config["configurable"]["strategy"]
+            # CORRECT WAY to access strategy name from initial_state
+            strategy_config = initial_state.get("config", {}).get("strategy_config", {})
+            strategy_name = strategy_config.get("strategy_name", "unknown_strategy")
             payload = initial_state.get("payload", {})
-            
-            # Initialize iteration counter
-            self._iteration_counters[run_id] = 0
             
             await self.ws_ops.broadcast_run_started(
                 run_id,
                 {
-                    'strategy': strategy.name,
+                    'strategy': strategy_name,
                     'intent': payload.get("intent", "unknown"),
                     'target': payload.get("target"),
                     'timestamp': initial_state.get("start_time")
@@ -64,7 +49,7 @@ class WebSocketMiddlewareV2(BaseMiddleware):
             )
             
         except Exception as e:
-            print(f"[WS Middleware] Error in before_run: {e}")
+            print(f"[AutomaticWSMiddleware] Error in before_run: {e}")
     
     async def after_step(self, step_data, run_id):
         """Broadcast step updates"""
@@ -75,40 +60,39 @@ class WebSocketMiddlewareV2(BaseMiddleware):
         node_output = step_data[node_name]
         
         try:
-            # Get current iteration
-            iteration = self._iteration_counters.get(run_id, 0)
-            
-            # Broadcast based on node type
+            # Retrieve iteration from state context
+            context = node_output.get("strategy_context", {})
+            iteration = context.get("iteration_count", 0)
+            turn_id = context.get("turn_id", f"turn_{iteration}")
+
             if node_name == "attack" and self.config.get("broadcast_attacks"):
-                await self._broadcast_attack(run_id, iteration, node_output)
-                # Increment after attack
-                self._iteration_counters[run_id] = iteration + 1
+                await self._broadcast_attack(run_id, iteration, node_output, turn_id)
             
             elif node_name == "defence" and self.config.get("broadcast_defences"):
-                await self._broadcast_defence(run_id, iteration, node_output)
+                await self._broadcast_defence(run_id, iteration, node_output, turn_id)
             
             elif node_name == "eval" and self.config.get("broadcast_evaluations"):
-                await self._broadcast_evaluation(run_id, iteration, node_output)
+                await self._broadcast_evaluation(run_id, iteration, node_output, turn_id)
             
-            elif node_name == "strategy_router":
+            elif node_name == "router":
                 await self._broadcast_routing(run_id, node_output)
             
         except Exception as e:
-            print(f"[WS Middleware] Error in after_step: {e}")
+            print(f"[AutomaticWSMiddleware] Error in after_step: {e}")
     
     async def after_run(self, final_state, run_id):
         """Broadcast run completion event"""
         try:
             context = final_state.get("strategy_context", {})
             current_turn = final_state.get("current_turn", {})
+            routing_signal = final_state.get("routing_signal")
             
             final_data = {
-                'total_attempts': context.get("attempt_count", 0),
-                'routing_signal': final_state.get("routing_signal"),
+                'total_attempts': context.get("iteration_count", 0),
+                'routing_signal': routing_signal,
                 'timestamp': current_turn.get("timestamp")
             }
             
-            # Add final evaluation if present
             if current_turn.get("evaluation"):
                 eval_result = current_turn["evaluation"]
                 final_data['final_evaluation'] = {
@@ -120,11 +104,8 @@ class WebSocketMiddlewareV2(BaseMiddleware):
             
             await self.ws_ops.broadcast_run_completed(run_id, final_data)
             
-            # Clean up counter
-            self._iteration_counters.pop(run_id, None)
-            
         except Exception as e:
-            print(f"[WS Middleware] Error in after_run: {e}")
+            print(f"[AutomaticWSMiddleware] Error in after_run: {e}")
     
     async def on_error(self, error, run_id, step_data=None):
         """Broadcast error event"""
@@ -134,15 +115,10 @@ class WebSocketMiddlewareV2(BaseMiddleware):
                 error=str(error),
                 error_type=type(error).__name__
             )
-            
-            # Clean up counter
-            self._iteration_counters.pop(run_id, None)
-            
         except Exception as e:
-            print(f"[WS Middleware] Error in on_error: {e}")
+            print(f"[AutomaticWSMiddleware] Error in on_error: {e}")
     
-    async def _broadcast_attack(self, run_id, iteration, node_output):
-        """Broadcast attack update using operations"""
+    async def _broadcast_attack(self, run_id, iteration, node_output, turn_id):
         turn = node_output.get("current_turn", {})
         attack = turn.get("attack")
         
@@ -159,13 +135,12 @@ class WebSocketMiddlewareV2(BaseMiddleware):
         
         await self.ws_ops.broadcast_attack_generated(
             run_id,
-            turn.get("turn_id", f"turn_{iteration}"),
+            turn_id,
             iteration,
             attack_data
         )
     
-    async def _broadcast_defence(self, run_id, iteration, node_output):
-        """Broadcast defence update using operations"""
+    async def _broadcast_defence(self, run_id, iteration, node_output, turn_id):
         turn = node_output.get("current_turn", {})
         defence = turn.get("defence")
         
@@ -183,13 +158,12 @@ class WebSocketMiddlewareV2(BaseMiddleware):
         
         await self.ws_ops.broadcast_defence_response(
             run_id,
-            turn.get("turn_id", f"turn_{iteration}"),
+            turn_id,
             iteration,
             defence_data
         )
     
-    async def _broadcast_evaluation(self, run_id, iteration, node_output):
-        """Broadcast evaluation update using operations"""
+    async def _broadcast_evaluation(self, run_id, iteration, node_output, turn_id):
         turn = node_output.get("current_turn", {})
         evaluation = turn.get("evaluation")
         
@@ -207,7 +181,7 @@ class WebSocketMiddlewareV2(BaseMiddleware):
         
         await self.ws_ops.broadcast_evaluation_complete(
             run_id,
-            turn.get("turn_id", f"turn_{iteration}"),
+            turn_id,
             iteration,
             evaluation_data
         )
@@ -215,18 +189,16 @@ class WebSocketMiddlewareV2(BaseMiddleware):
         # Also broadcast turn completed
         await self.ws_ops.broadcast_turn_completed(
             run_id,
-            turn.get("turn_id", f"turn_{iteration}"),
+            turn_id,
             iteration
         )
     
     async def _broadcast_routing(self, run_id, node_output):
-        """Broadcast routing decision"""
         routing_signal = node_output.get("routing_signal")
         context = node_output.get("strategy_context", {})
         
-        # Broadcast as progress update
-        current = context.get("attempt_count", 0)
-        total = context.get("max_attempts", current + 1)
+        current = context.get("iteration_count", 0) # Use iteration_count for progress
+        total = context.get("max_iterations", current + 1) # Use max_iterations for total
         
         await self.ws_ops.broadcast_run_progress(
             run_id,
