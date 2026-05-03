@@ -14,11 +14,6 @@ class AttackStrategy(ABC):
         self.name = self.__class__.__name__
     
     @abstractmethod
-    def setup(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Initialize strategy - called once at start"""
-        raise NotImplementedError
-    
-    @abstractmethod
     async def execute_generation(self, state: SystemState, config: Dict[str, Any]) -> Dict[str, Any]:
         """
         Generate next attack - called by AttackNode.
@@ -36,17 +31,6 @@ class AttackStrategy(ABC):
         raise NotImplementedError
     
     @abstractmethod
-    def process_end_of_loop(self, state: SystemState) -> Dict[str, Any]:
-        """Process evaluation and decide routing - called after EvalNode"""
-        raise NotImplementedError
-    
-    @abstractmethod
-    def route(self, state: SystemState) -> str:
-        """Determine the next routing signal based on the current state."""
-        raise NotImplementedError
-
-    # Placeholder for initialization - to be implemented by specific strategies
-    @abstractmethod
     def initialize(self, state: SystemState) -> Dict[str, Any]:
         """Initialize the strategy, potentially loading resources or setting up context.
         
@@ -58,6 +42,16 @@ class AttackStrategy(ABC):
         """
         raise NotImplementedError
 
-    def get_next_route(self, state: SystemState) -> str:
-        """Extract routing signal from state"""
-        return state.get("routing_signal", "__end__")
+    @abstractmethod
+    def route(self, state: SystemState) -> Dict[str, Any]:
+        """Determine the next routing signal and update context based on state."""
+        raise NotImplementedError
+
+    @classmethod
+    @abstractmethod
+    def get_dependency_schema(cls) -> Dict[str, Any]:
+        """
+        Return a JSON schema defining the strategy's dependencies.
+        This is used by the frontend to render input fields for required parameters.
+        """
+        raise NotImplementedError
