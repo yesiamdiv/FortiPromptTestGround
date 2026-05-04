@@ -44,36 +44,39 @@ class ManualDatabaseMiddleware(BaseMiddleware):
             # --- Session and Turn Management ---
             session_id = payload.get("session_id")
             if not session_id:
-                # If no session_id in payload, this is the first turn of a new session.
-                # The API layer should ideally create the session and pass ID, but middleware can handle initial creation if needed.
-                # For now, we'll expect API to pass it. If not, raise error.
-                raise ValueError("Manual run requires a 'session_id' in the payload.")
+                # Expecting session_id from payload for manual turns.
+                # If missing, it indicates an issue in the API call or payload structure.
+                raise ValueError("Manual run requires a 'session_id' in the payload for manual turn processing.")
             
             # Attempt to fetch the last turn for state hydration
             last_manual_turn = await db_ops.get_last_manual_turn_for_session(session_id)
             
+            strategy_context = initial_state.get("strategy_context", {})
             if last_manual_turn:
                 print(f"  🔄 Hydrating state from last turn {last_manual_turn.turn_id} for session {session_id}")
                 # Hydrate strategy_context history from the last manual turn
-                if 'strategy_context' not in initial_state or not initial_state['strategy_context']:
-                    initial_state['strategy_context'] = {}
-                
-                # Assuming manual_turn data stores accumulated history or can reconstruct it
-                # For now, let's assume the last turn's attack prompt is the full history up to that point for simplicity
-                # In a real scenario, you'd fetch all turns for the session and build the history list
                 history = [last_manual_turn.attack_prompt] if last_manual_turn.attack_prompt else []
-                initial_state['strategy_context']['history'] = history
-                initial_state['strategy_context']['iteration_count'] = last_manual_turn.index + 1
-                # Other context hydration as needed
-                
+                # Ensure history is accumulated if previous turns exist
+                if last_manual_turn.index > 0: # This assumes history is not directly stored but reconstructed
+                    # Fetching all turns to build history would be better for complex states
+                    # For now, using last turn's prompt as a basic history item.
+                    # A more robust solution would involve fetching all previous turns for the session.
+                    pass
+
+                strategy_context["history"] = history
+                strategy_context["iteration_count"] = last_manual_turn.index + 1
             else:
                 print(f"  ✨ Starting new turn for session {session_id} (no prior turns found)")
                 # If no prior turns, ensure history and iteration count are initialized
-                if 'strategy_context' not in initial_state or not initial_state['strategy_context']:
-                    initial_state['strategy_context'] = {}
-                initial_state['strategy_context']['history'] = []
-                initial_state['strategy_context']['iteration_count'] = 0
+                strategy_context["history"] = []
+                strategy_context["iteration_count"] = 0
             
+            # Ensure session_id is in strategy_context for subsequent access
+            strategy_context["session_id"] = session_id
+            strategy_context["max_turns"] = self.config.get("max_turns", 100)
+
+            initial_state["strategy_context"] = strategy_context
+
             # Create a new manual_turn entry for the current execution cycle
             current_turn_id = f"turn_{uuid.uuid4().hex[:8]}"
             initial_state["current_turn"] = {"turn_id": current_turn_id} # Inject new turn_id into state
@@ -87,14 +90,17 @@ class ManualDatabaseMiddleware(BaseMiddleware):
             )
             print(f"  ➡️ Created new manual turn {current_turn_id} for session {session_id}")
 
-            # Run creation is handled by the API, so no need to create run document here.
-            # The run status is also managed by RunManager based on signals.
-            print(f"📝 Manual run starting. Run ID: {run_id}, Session ID: {session_id}, Strategy: {strategy_name}")
+            # Run creation is handled by the API; here we just ensure the run status is idle if it's the start of a manual sequence.
+            # RunManager will handle the state transitions based on signals.
+            print(f"📝 Manual run processing turn. Run ID: {run_id}, Session ID: {session_id}, Strategy: {strategy_name}")
             
+        except ValueError as e: # Catch specific error for missing session_id
+            print(f"[ManualDatabaseMiddleware] Configuration Error in before_run: {e}")
+            # Update run status to failed if critical config is missing
+            await db_ops.update_run(run_id, {"status": "failed", "error": str(e)})
         except Exception as e:
-            print(f"[ManualDatabaseMiddleware] Error in before_run: {e}")
-            # On error, ensure run status is updated to failed
-            await db_ops.update_run(run_id, {"status": "failed"})
+            print(f"[ManualDatabaseMiddleware] Unexpected Error in before_run: {e}")
+            await db_ops.update_run(run_id, {"status": "failed", "error": str(e)})
 
     async def after_step(self, step_data, run_id):
         db = get_db()
@@ -113,12 +119,12 @@ class ManualDatabaseMiddleware(BaseMiddleware):
             context = node_output.get("strategy_context", {})
             iteration = context.get("iteration_count", 0) 
             
-            # Retrieve session_id and turn_id from node_output or context
-            session_id = node_output.get("session_id", initial_state.get("session_id")) # Try from node_output first
+            # Retrieve session_id and turn_id from context or node_output
+            session_id = context.get("session_id")
             current_turn_id = node_output.get("current_turn", {}).get("turn_id")
             
             if not session_id or not current_turn_id:
-                print(f"[ManualDatabaseMiddleware] Warning: session_id or turn_id missing in after_step for {node_name}")
+                print(f"[ManualDatabaseMiddleware] Warning: session_id or turn_id missing in after_step for {node_name}. Cannot save turn data.")
                 return # Cannot save without these IDs
 
             if node_name == "attack" and self.config.get("save_attacks"):
@@ -152,8 +158,12 @@ class ManualDatabaseMiddleware(BaseMiddleware):
             # Get session_id from final_state (injected in before_run)
             session_id = final_state.get("session_id")
             if not session_id:
-                print(f"[ManualDatabaseMiddleware] Error: session_id missing in final_state for run {run_id}")
-                return # Cannot save without session_id
+                print(f"[ManualDatabaseMiddleware] Error: session_id missing in final_state for run {run_id}. Cannot update session.")
+                # Attempt fallback to get from run_id if needed, but ideally it should be in state.
+                session_id = await db_ops.get_session_id_for_run(run_id) # This might need a dedicated db_ops method
+                if not session_id:
+                    print(f"[ManualDatabaseMiddleware] Critical Error: Could not retrieve session_id for run {run_id}. State checkpoint may not be saved correctly.")
+                    return
 
             # Update the ManualSession with the final state checkpoint
             await db_ops.update_manual_session_state(
