@@ -74,7 +74,7 @@ class RunExecutor:
     async def _initialize_dependencies(self):
         """Initialize database operations."""
         db = get_db()
-        if not db:
+        if db is None:
             raise RuntimeError("Database not connected")
 
     async def start(self, payload: Dict[str, Any]) -> SystemState:
@@ -141,7 +141,7 @@ class RunExecutor:
     async def _update_db_status(self, status: RunStatus, error: str = None):
         """Update run status in database"""
         db = get_db()
-        if not db:
+        if db is None:
             return
         
         db_ops = get_db_ops(db)
@@ -170,7 +170,7 @@ class RunManager:
     async def create_run(self, run_id: str, run_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create run in database"""
         db = get_db()
-        if not db:
+        if db is None:
             raise RuntimeError("Database not connected")
         
         db_ops = get_db_ops(db)
@@ -185,7 +185,7 @@ class RunManager:
                 raise RuntimeError(f"Run {run_id} is already running")
             
             db = get_db()
-            if not db:
+            if db is None:
                 raise RuntimeError("Database not connected")
             
             db_ops = get_db_ops(db)

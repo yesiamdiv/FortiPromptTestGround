@@ -35,7 +35,7 @@ class DefenseConfig(BaseModel):
 async def get_defense_config(run_id: str):
     """Get defense configuration for a run"""
     db = get_db()
-    if not db:
+    if db is None:
         raise HTTPException(status_code=500, detail="Database not connected")
     
     run = await db.runs.find_one({"run_id": run_id})
@@ -50,7 +50,7 @@ async def get_defense_config(run_id: str):
 async def update_defense_config(run_id: str, config: DefenseConfig):
     """Update defense configuration for a run"""
     db = get_db()
-    if not db:
+    if db is None:
         raise HTTPException(status_code=500, detail="Database not connected")
     
     # Verify run exists
@@ -78,7 +78,7 @@ async def update_defense_config(run_id: str, config: DefenseConfig):
 async def get_defense_responses(run_id: str):
     """Get all defense responses for a run"""
     db = get_db()
-    if not db:
+    if db is None:
         raise HTTPException(status_code=500, detail="Database not connected")
     
     from server.database.operations import get_db_ops
@@ -130,7 +130,7 @@ async def get_defense_responses(run_id: str):
 async def get_defense_stats(run_id: str):
     """Get defense statistics for a run"""
     db = get_db()
-    if not db:
+    if db is None:
         raise HTTPException(status_code=500, detail="Database not connected")
     
     from server.database.operations import get_db_ops

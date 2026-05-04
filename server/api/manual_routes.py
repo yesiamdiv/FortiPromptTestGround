@@ -22,7 +22,7 @@ router = APIRouter()
 
 async def _get_db_ops_dependency():
     db = get_db()
-    if not db:
+    if db is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database not connected.")
     return get_db_ops(db)
 

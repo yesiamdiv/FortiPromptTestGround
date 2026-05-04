@@ -30,7 +30,7 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
 
     async def before_run(self, initial_state: SystemState, config: Dict[str, Any], run_id: str):
         db = get_db()
-        if not db:
+        if db is None:
             print("⚠️  Database not connected, skipping persistence")
             return
         
@@ -41,14 +41,14 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
             strategy_name = strategy_config.get("strategy_name", "unknown_strategy")
             payload = initial_state.get("payload", {})
             
-            print(f"📝 Automatic run starting. Run ID: {run_id}, Strategy: {strategy_name}, Intent: {payload.get("intent", "unknown")}")
+            print(f"📝 Automatic run starting. Run ID: {run_id}, Strategy: {strategy_name}, Intent: {payload.get('intent', 'unknown')}")
             
         except Exception as e:
             print(f"[AutomaticDatabaseMiddleware] Error in before_run: {e}")
     
     async def after_step(self, step_data, run_id):
         db = get_db()
-        if not db:
+        if db is None:
             return
         
         if not step_data:
@@ -78,7 +78,7 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
     
     async def after_run(self, final_state, run_id):
         db = get_db()
-        if not db:
+        if db is None:
             return
         
         try:
@@ -105,7 +105,7 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
     
     async def on_error(self, error, run_id, step_data=None):
         db = get_db()
-        if not db:
+        if db is None:
             return
         
         try:

@@ -176,9 +176,9 @@ def create_default_nodes(config: Dict[str, Any] = None) -> Dict[str, BaseAdversa
     """Create a complete set of default nodes"""
     node_config = config or {}
     return {
-        "init": DefaultInitNode(node_config.get("init", {{}})),
-        "attack": DefaultAttackNode(node_config.get("attack", {{}})),
-        "defence": DefaultDefenceNode(node_config.get("defence", {{}})),
-        "eval": DefaultEvalNode(node_config.get("eval", {{}})),
-        "router": RouterNode(node_config.get("router", {{}})) # Use RouterNode
+        "init": DefaultInitNode(node_config.get("init", {})),
+        "attack": DefaultAttackNode(node_config.get("attack", {})),
+        "defence": DefaultDefenceNode(node_config.get("defence", {})),
+        "eval": DefaultEvalNode(node_config.get("eval", {})),
+        "router": RouterNode(node_config.get("router", {}))
     }

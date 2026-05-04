@@ -32,7 +32,7 @@ class AttackConfig(BaseModel):
 async def get_attack_config(run_id: str):
     """Get attack configuration for a run"""
     db = get_db()
-    if not db:
+    if db is None:
         raise HTTPException(status_code=500, detail="Database not connected")
     
     run = await db.runs.find_one({"run_id": run_id})
@@ -47,7 +47,7 @@ async def get_attack_config(run_id: str):
 async def update_attack_config(run_id: str, config: AttackConfig):
     """Update attack configuration for a run"""
     db = get_db()
-    if not db:
+    if db is None:
         raise HTTPException(status_code=500, detail="Database not connected")
     
     # Verify run exists
@@ -75,7 +75,7 @@ async def update_attack_config(run_id: str, config: AttackConfig):
 async def get_attack_prompts(run_id: str):
     """Get all attack prompts for a run"""
     db = get_db()
-    if not db:
+    if db is None:
         raise HTTPException(status_code=500, detail="Database not connected")
     
     from server.database.operations import get_db_ops
@@ -110,7 +110,7 @@ async def get_attack_prompts(run_id: str):
 async def get_attack_stats(run_id: str):
     """Get attack statistics for a run"""
     db = get_db()
-    if not db:
+    if db is None:
         raise HTTPException(status_code=500, detail="Database not connected")
     
     from server.database.operations import get_db_ops

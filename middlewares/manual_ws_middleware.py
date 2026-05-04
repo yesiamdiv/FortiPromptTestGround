@@ -39,10 +39,10 @@ class ManualWSMiddleware(BaseMiddleware):
             strategy_config = initial_state.get("config", {}).get("strategy_config", {})
             strategy_name = strategy_config.get("strategy_name", "unknown_strategy")
             payload = initial_state.get("payload", {})
-            session_id = initial_state.get("session_id", payload.get("session_id")) # Get session_id
+            session_id = initial_state.get("session_id", payload.get("session_id")) 
 
             if session_id:
-                await self.ws_ops.sio_manager.join_room(session_id) # Ensure client is in session room
+                await self.ws_ops.sio_manager.join_room(session_id) 
             
             await self.ws_ops.broadcast_run_started(
                 run_id,
@@ -51,7 +51,7 @@ class ManualWSMiddleware(BaseMiddleware):
                     'intent': payload.get("intent", "unknown"),
                     'target': payload.get("target"),
                     'timestamp': initial_state.get("start_time"),
-                    'session_id': session_id # Include session_id in start event
+                    'session_id': session_id 
                 }
             )
             
@@ -79,33 +79,29 @@ class ManualWSMiddleware(BaseMiddleware):
                 return
 
             if node_name == "attack" and self.config.get("broadcast_attacks"):
-                # Corrected: session_id passed as positional argument
                 await self.ws_ops.broadcast_manual_attack_generated(
                     run_id, session_id, turn_id, iteration,
                     node_output.get("current_turn", {}).get("attack").dict()
                 )
             
             elif node_name == "defence" and self.config.get("broadcast_defences"):
-                # Corrected: session_id passed as positional argument
                 await self.ws_ops.broadcast_manual_defence_response(
                     run_id, session_id, turn_id, iteration,
                     node_output.get("current_turn", {}).get("defence").dict()
                 )
             
             elif node_name == "eval" and self.config.get("broadcast_evaluations"):
-                # Corrected: session_id passed as positional argument
                 await self.ws_ops.broadcast_manual_evaluation_complete(
                     run_id, session_id, turn_id, iteration,
                     node_output.get("current_turn", {}).get("evaluation").dict()
                 )
             
             elif node_name == "router":
-                # Manual router just signals END. Progress is broadcast via run_progress.
                 await self.ws_ops.broadcast_run_progress(
                     run_id,
                     current=iteration,
                     total=context.get("max_turns", iteration + 1),
-                    message=f"Routing: {node_output.get("routing_signal")}"
+                    message=f"Routing: {node_output.get('routing_signal')}"
                 )
             
         except Exception as e:
@@ -119,7 +115,7 @@ class ManualWSMiddleware(BaseMiddleware):
             context = final_state.get("strategy_context", {})
             current_turn = final_state.get("current_turn", {})
             
-            session_id = context.get("session_id") # Get session_id from strategy_context
+            session_id = context.get("session_id") 
             if not session_id:
                 print(f"[ManualWSMiddleware] Warning: session_id missing in final_state context for run {run_id}. Cannot broadcast run_idle.")
                 return
@@ -130,7 +126,7 @@ class ManualWSMiddleware(BaseMiddleware):
                     'message': 'Awaiting user input for next turn',
                     'last_turn_id': current_turn.get("turn_id"),
                     'iteration_count': context.get("iteration_count", 0),
-                    'session_id': session_id # Include session_id in idle event
+                    'session_id': session_id 
                 }
             )
             
@@ -138,9 +134,7 @@ class ManualWSMiddleware(BaseMiddleware):
             print(f"[ManualWSMiddleware] Error in after_run: {e}")
     
     async def on_error(self, error, run_id, step_data=None):
-        """
-        Broadcast error event.
-        """
+        """Broadcast error event"""
         try:
             await self.ws_ops.broadcast_run_error(
                 run_id,
@@ -165,13 +159,8 @@ class ManualWSMiddleware(BaseMiddleware):
             'timestamp': turn.get("timestamp")
         }
         
-        # Corrected: session_id passed as positional argument
         await self.ws_ops.broadcast_manual_attack_generated(
-            run_id,
-            context.get("session_id"), 
-            turn_id,
-            iteration,
-            attack_data
+            run_id, session_id, turn_id, iteration, attack_data
         )
     
     async def _broadcast_defence(self, run_id, iteration, node_output, turn_id):
@@ -190,13 +179,8 @@ class ManualWSMiddleware(BaseMiddleware):
             'timestamp': turn.get("timestamp")
         }
         
-        # Corrected: session_id passed as positional argument
         await self.ws_ops.broadcast_manual_defence_response(
-            run_id,
-            context.get("session_id"), 
-            turn_id,
-            iteration,
-            defence_data
+            run_id, session_id, turn_id, iteration, defence_data
         )
     
     async def _broadcast_evaluation(self, run_id, iteration, node_output, turn_id):
@@ -215,20 +199,18 @@ class ManualWSMiddleware(BaseMiddleware):
             'timestamp': turn.get("timestamp")
         }
         
-        # Corrected: session_id passed as positional argument
         await self.ws_ops.broadcast_manual_evaluation_complete(
             run_id,
-            context.get("session_id"), 
+            session_id,
             turn_id,
             iteration,
             evaluation_data
         )
         
         # Also broadcast turn completed
-        # Corrected: session_id passed as positional argument
         await self.ws_ops.broadcast_manual_turn_completed(
             run_id,
-            context.get("session_id"), 
+            session_id,
             turn_id,
             iteration
         )
@@ -238,7 +220,7 @@ class ManualWSMiddleware(BaseMiddleware):
         context = node_output.get("strategy_context", {})
         
         current = context.get("iteration_count", 0)
-        total = context.get("max_turns", current + 1) # Use max_turns for total progress in manual session
+        total = context.get("max_turns", current + 1) 
         
         await self.ws_ops.broadcast_run_progress(
             run_id,

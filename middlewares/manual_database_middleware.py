@@ -31,7 +31,7 @@ class ManualDatabaseMiddleware(BaseMiddleware):
 
     async def before_run(self, initial_state: SystemState, config: Dict[str, Any], run_id: str):
         db = get_db()
-        if not db:
+        if db is None:
             print("⚠️  Database not connected, skipping persistence")
             return
         
@@ -104,7 +104,7 @@ class ManualDatabaseMiddleware(BaseMiddleware):
 
     async def after_step(self, step_data, run_id):
         db = get_db()
-        if not db:
+        if db is None:
             return
         
         if not step_data:
@@ -141,7 +141,7 @@ class ManualDatabaseMiddleware(BaseMiddleware):
 
     async def after_run(self, final_state: SystemState, run_id: str):
         db = get_db()
-        if not db:
+        if db is None:
             return
         
         try:
@@ -183,7 +183,7 @@ class ManualDatabaseMiddleware(BaseMiddleware):
     
     async def on_error(self, error, run_id, step_data=None):
         db = get_db()
-        if not db:
+        if db is None:
             return
         
         try:
