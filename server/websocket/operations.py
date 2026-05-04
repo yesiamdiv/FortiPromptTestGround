@@ -26,13 +26,11 @@ class WebSocketOperations:
         """
         self.sio_manager = socketio_manager
     
+    # --- Automatic Run Events ---
+
     async def broadcast_run_started(self, run_id: str, data: Dict[str, Any]):
         """
-        Broadcast run started event.
-        
-        Args:
-            run_id: Run identifier
-            data: Event data including strategy, intent, etc.
+        Broadcast run started event for automatic runs.
         """
         await self.sio_manager.broadcast_to_room(
             run_id,
@@ -52,13 +50,7 @@ class WebSocketOperations:
         attack_data: Dict[str, Any]
     ):
         """
-        Broadcast attack generation event.
-        
-        Args:
-            run_id: Run identifier
-            turn_id: Turn identifier
-            index: Attack iteration number
-            attack_data: Attack data (prompt, metadata)
+        Broadcast attack generation event for automatic runs.
         """
         await self.sio_manager.broadcast_to_room(
             run_id,
@@ -80,13 +72,7 @@ class WebSocketOperations:
         defence_data: Dict[str, Any]
     ):
         """
-        Broadcast defence response event.
-        
-        Args:
-            run_id: Run identifier
-            turn_id: Turn identifier
-            index: Defence iteration number
-            defence_data: Defence data (response, blocked status)
+        Broadcast defence response event for automatic runs.
         """
         await self.sio_manager.broadcast_to_room(
             run_id,
@@ -108,13 +94,7 @@ class WebSocketOperations:
         evaluation_data: Dict[str, Any]
     ):
         """
-        Broadcast evaluation completion event.
-        
-        Args:
-            run_id: Run identifier
-            turn_id: Turn identifier
-            index: Evaluation iteration number
-            evaluation_data: Evaluation data (score, success, feedback)
+        Broadcast evaluation completion event for automatic runs.
         """
         await self.sio_manager.broadcast_to_room(
             run_id,
@@ -135,12 +115,7 @@ class WebSocketOperations:
         index: int
     ):
         """
-        Broadcast turn completion event.
-        
-        Args:
-            run_id: Run identifier
-            turn_id: Turn identifier
-            index: Turn iteration number
+        Broadcast turn completion event for automatic runs.
         """
         await self.sio_manager.broadcast_to_room(
             run_id,
@@ -161,13 +136,7 @@ class WebSocketOperations:
         message: str = None
     ):
         """
-        Broadcast general run progress.
-        
-        Args:
-            run_id: Run identifier
-            current: Current iteration
-            total: Total iterations
-            message: Optional progress message
+        Broadcast general run progress for automatic runs.
         """
         await self.sio_manager.broadcast_to_room(
             run_id,
@@ -188,11 +157,7 @@ class WebSocketOperations:
         final_data: Dict[str, Any]
     ):
         """
-        Broadcast run completion event.
-        
-        Args:
-            run_id: Run identifier
-            final_data: Final run data (total attempts, scores, etc.)
+        Broadcast run completion event (for automatic runs).
         """
         await self.sio_manager.broadcast_to_room(
             run_id,
@@ -212,11 +177,6 @@ class WebSocketOperations:
     ):
         """
         Broadcast run error event.
-        
-        Args:
-            run_id: Run identifier
-            error: Error message
-            error_type: Optional error type/category
         """
         await self.sio_manager.broadcast_to_room(
             run_id,
@@ -229,43 +189,134 @@ class WebSocketOperations:
             }
         )
     
-    async def broadcast_run_data_synced(
+    # --- Manual Run Events (New) ---
+
+    async def broadcast_manual_attack_generated(
         self,
         run_id: str,
-        data_summary: Dict[str, Any]
+        session_id: str,
+        turn_id: str,
+        index: int,
+        attack_data: Dict[str, Any]
     ):
         """
-        Broadcast data synchronization event.
+        Broadcast attack generation event for manual runs (includes session_id).
+        """
+        await self.sio_manager.broadcast_to_room(
+            session_id, # Broadcast to session room
+            'manual_attack_generated',
+            {
+                'type': 'manual_attack_generated',
+                'run_id': run_id,
+                'session_id': session_id,
+                'turn_id': turn_id,
+                'index': index,
+                'attack': attack_data
+            }
+        )
+
+    async def broadcast_manual_defence_response(
+        self,
+        run_id: str,
+        session_id: str,
+        turn_id: str,
+        index: int,
+        defence_data: Dict[str, Any]
+    ):
+        """
+        Broadcast defence response event for manual runs (includes session_id).
+        """
+        await self.sio_manager.broadcast_to_room(
+            session_id, # Broadcast to session room
+            'manual_defence_response',
+            {
+                'type': 'manual_defence_response',
+                'run_id': run_id,
+                'session_id': session_id,
+                'turn_id': turn_id,
+                'index': index,
+                'defence': defence_data
+            }
+        )
+
+    async def broadcast_manual_evaluation_complete(
+        self,
+        run_id: str,
+        session_id: str,
+        turn_id: str,
+        index: int,
+        evaluation_data: Dict[str, Any]
+    ):
+        """
+        Broadcast evaluation completion event for manual runs (includes session_id).
+        """
+        await self.sio_manager.broadcast_to_room(
+            session_id, # Broadcast to session room
+            'manual_evaluation_complete',
+            {
+                'type': 'manual_evaluation_complete',
+                'run_id': run_id,
+                'session_id': session_id,
+                'turn_id': turn_id,
+                'index': index,
+                'evaluation': evaluation_data
+            }
+        )
+
+    async def broadcast_manual_turn_completed(
+        self,
+        run_id: str,
+        session_id: str,
+        turn_id: str,
+        index: int
+    ):
+        """
+        Broadcast manual turn completion event (includes session_id).
+        """
+        await self.sio_manager.broadcast_to_room(
+            session_id, # Broadcast to session room
+            'manual_turn_completed',
+            {
+                'type': 'manual_turn_completed',
+                'run_id': run_id,
+                'session_id': session_id,
+                'turn_id': turn_id,
+                'index': index
+            }
+        )
+
+    async def broadcast_run_idle(
+        self,
+        run_id: str,
+        data: Dict[str, Any]
+    ):
+        """
+        Broadcast run idle event (for manual runs awaiting user input).
         
         Args:
             run_id: Run identifier
-            data_summary: Summary of synced data
+            data: Additional data, e.g., message, last turn info.
         """
         await self.sio_manager.broadcast_to_room(
             run_id,
-            'run_data_synced',
+            'run_idle',
             {
-                'type': 'run_data_synced',
+                'type': 'run_idle',
                 'run_id': run_id,
-                **data_summary
+                **data
             }
         )
-    
-    async def broadcast_new_run_available(self, run_id: str):
+
+    async def broadcast_new_run_available(self, run_id: str, run_summary: Dict[str, Any]):
         """
-        Broadcast that a new run is available.
-        
-        Broadcasts to all connections (not just a specific room).
-        
-        Args:
-            run_id: Run identifier
+        Broadcast that a new run is available to all connections (includes run_summary).
         """
-        # This goes to all connected clients
         await self.sio_manager.sio.emit(
             'new_run_available',
             {
                 'type': 'new_run_available',
-                'run_id': run_id
+                'run_id': run_id,
+                'run_summary': run_summary
             }
         )
     
@@ -276,12 +327,7 @@ class WebSocketOperations:
         data: Dict[str, Any]
     ):
         """
-        Send message to specific session.
-        
-        Args:
-            session_id: Session identifier
-            event: Event name
-            data: Event data
+        Send message to specific session (direct to client). This might be for specific UI feedback.
         """
         await self.sio_manager.send_to_session(session_id, event, data)
 
@@ -290,11 +336,5 @@ class WebSocketOperations:
 def get_ws_ops(socketio_manager: SocketIOManager) -> WebSocketOperations:
     """
     Create WebSocket operations instance.
-    
-    Args:
-        socketio_manager: Socket.IO manager
-    
-    Returns:
-        WebSocketOperations instance
     """
     return WebSocketOperations(socketio_manager)

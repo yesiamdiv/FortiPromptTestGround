@@ -1,299 +1,302 @@
-
 """
-Refined WebSocket Events and API Workflow Considerations
+API Endpoints for Run Management and Discovery"""
 
-This file outlines the intended WebSocket events and API interactions for enhanced real-time feedback and manual session management.
-"""
+from fastapi import APIRouter, HTTPException, Depends, status
+from typing import List, Dict, Any, Optional
+import uuid
 
-import asyncio
-from typing import Dict, Any, List, Optional
+from server.api.schemas import (
+    CreateRunRequest, UpdateRunRequest, RunResponse, RunDetailsResponse, ListRunsResponse,
+    MessageResponse, ErrorResponse, StrategySchemaResponse, ListStrategiesResponse,
+    ProviderInfoResponse, ListProvidersResponse, NodeSchemaResponse, ListNodeSchemasResponse
+)
+from server.run_manager import get_run_manager, RunManager, RunStatus
+from server.database.connection import get_db
+from server.database.operations import get_db_ops
+from engine.registry import get_strategy_registry, get_node_registry
+from engine.provider_registry import get_provider_registry # Import provider registry
+from server.config.models import GraphConfig, AttackNodeConfig, DefenseNodeConfig, EvaluationNodeConfig # For GraphConfig validation
 from datetime import datetime
 
-from server.websocket.socketio_manager import SocketIOManager
-from server.database.manual_operations import get_manual_ops
-from server.database.connection import get_db
-from server.run_manager import RunExecutor, RunStatus
 
+router = APIRouter()
 
-async def emit_manual_wait_events(executor: RunExecutor, session_id: str, run_id: str):
-    """Emits WebSocket events when a run enters a manual wait state."""
-    socketio_manager = get_socketio_manager()
-    
-    if not socketio_manager:
-        print("Warning: Socket.IO manager not initialized. Cannot emit wait events.")
-        return
+async def _get_db_ops_dependency():
+    db = get_db()
+    if not db:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database not connected.")
+    return get_db_ops(db)
 
-    # Event indicating a manual input is required
-    await socketio_manager.broadcast_to_room(
-        run_id,
-        'manual_input_required',
-        {
-            'run_id': run_id,
-            'session_id': session_id,
-            'input_type': executor.current_state.get("manual_input_required", "unknown"),
-            'timeout_seconds': executor.graph_config.attack_node_config.max_attempts_per_turn, # Example: using a config value
-            'status': 'waiting'
-        }
-    )
-
-    # Event indicating the run is paused specifically for input
-    await socketio_manager.broadcast_to_room(
-        run_id,
-        'run_paused_for_input',
-        {
-            'run_id': run_id,
-            'session_id': session_id,
-            'status': RunStatus.WAITING_INPUT.value
-        }
-    )
-
-
-async def emit_resumption_event(run_id: str, session_id: str, turn_id: str):
-    """Emits WebSocket event when manual input is received and run resumes."""
-    socketio_manager = get_socketio_manager()
-    if not socketio_manager:
-        print("Warning: Socket.IO manager not initialized. Cannot emit resumption event.")
-        return
-
-    await socketio_manager.broadcast_to_room(
-        run_id,
-        'manual_input_received',
-        {
-            'run_id': run_id,
-            'session_id': session_id,
-            'turn_id': turn_id, # The turn that received manual input
-            'status': 'processing' # Indicate that it's now processing
-        }
-    )
-
-
-async def emit_turn_update_events(run_id: str, session_id: str, turn: Dict[str, Any], node_name: str):
-    """Emits WebSocket events for turn updates (attack, defense, eval)."""
-    socketio_manager = get_socketio_manager()
-    if not socketio_manager:
-        return
-
-    event_name = f"manual_{node_name}_update"
-    payload = {
-        'session_id': session_id,
-        'turn_id': turn.get("turn_id"),
-        'turn_index': turn.get("turn_index"),
-        'timestamp': turn.get("timestamp")
-    }
-
-    if node_name == "attack":
-        payload.update({
-            'attack_prompt': turn.get("attack_prompt"),
-            'attack_metadata': turn.get("metadata", {{}})
-        })
-    elif node_name == "defence":
-        payload.update({
-            'defense_response': turn.get("defense_response"),
-            'was_blocked': turn.get("defense_was_blocked"),
-            'status_code': turn.get("defense_status_code"),
-            'defense_metadata': turn.get("defense_metadata", {{}})
-        })
-    elif node_name == "eval":
-        payload.update({
-            'score': turn.get("eval_score"),
-            'success': turn.get("eval_success"),
-            'category': turn.get("eval_category"),
-            'feedback': turn.get("eval_feedback", ""),
-            'eval_metadata': turn.get("metadata", {{}})
-        })
-    
-    await socketio_manager.broadcast_to_room(run_id, event_name, payload)
-
-
-# --- Refinements to RunExecutor and API Handlers ---
-
-# Modify RunExecutor to integrate WebSocket broadcasts for wait states
-# This requires accessing the executor from the API handler.
-
-async def refine_run_executor_for_websockets(executor: "RunExecutor", session_id: str):
-    """Inject WebSocket signaling logic into RunExecutor if needed, or ensure it picks up state changes.
-    
-    The current approach is that ManualAttackNode sets state flags, and RunExecutor monitors them.
-    The API then sets the event. WebSocket events should be broadcast when these state changes occur.
-    
-    We will adjust the `_handle_manual_wait` in RunExecutor to emit WebSocket events.
+@router.post("/runs", response_model=RunResponse, status_code=status.HTTP_201_CREATED)
+async def create_new_run(
+    request: CreateRunRequest,
+    run_manager: RunManager = Depends(get_run_manager),
+    db_ops: Any = Depends(_get_db_ops_dependency)
+):
     """
-    pass # Placeholder for potential direct injection or modification if needed.
-
-# We will modify RunExecutor directly to emit WebSocket events when entering/exiting wait states.
-
-
-
-# --- API Route Integration --- 
-# (These would typically be in server/api/routes.py or a dedicated manual_routes file)
-
-# Assume `router` is an APIRouter instance
-
-def integrate_manual_routes(router):
-    """Integrates manual session API routes into the main router.
-    This function would be called in server/main.py.
+    Create a new adversarial run.
+    
+    This initializes a run record in the database but does not start execution.
     """
-    # Example: Importing and including routes from manual_routes.py
-    # from server.api.manual_routes import router as manual_router
-    # router.include_router(manual_router, prefix="/api/v1/runs")
-    
-    # For demonstration, adding the critical manual prompt endpoint here if it wasn't there.
-    # NOTE: This is illustrative. Actual integration should be in the main API setup.
-    
-    @router.post("/runs/{run_id}/manual-prompt", response_model=Dict[str, Any])
-    async def provide_manual_prompt(run_id: str, prompt_data: Dict[str, str]):
-        """
-        Endpoint to provide manual input (e.g., attack prompt) for a paused run.
-        This endpoint interacts with manual session management and signals the RunExecutor to resume.
-        """
+    run_id = f"run_{uuid.uuid4().hex[:12]}"
+    try:
+        run_data = {
+            "run_id": run_id,
+            "name": request.name,
+            "description": request.description,
+            "strategy": request.graph_config.strategy_config.strategy_name, # Extract from graph_config
+            "graph_config": request.graph_config.dict(), # Store the full graph_config
+            "created_at": datetime.utcnow().isoformat(),
+            "status": RunStatus.IDLE.value # New runs are initially idle
+        }
+        
+        await db_ops.create_run(run_data)
+        
+        return RunResponse(run_id=run_id, status=RunStatus.IDLE.value, message="Run created successfully.")
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create run: {str(e)}")
+
+@router.patch("/runs/{run_id}", response_model=RunDetailsResponse)
+async def update_run_config(
+    run_id: str,
+    request: UpdateRunRequest,
+    db_ops: Any = Depends(_get_db_ops_dependency)
+):
+    """
+    Update configuration for an existing run (e.g., strategy parameters).
+    This allows dynamic adjustment of run settings before or during idle states.
+    """
+    try:
+        run = await db_ops.get_run(run_id)
+        if not run:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run with ID {run_id} not found.")
+
+        updates = {}
+        if request.name is not None:
+            updates["name"] = request.name
+        if request.description is not None:
+            updates["description"] = request.description
+        if request.graph_config is not None:
+            updates["graph_config"] = request.graph_config.dict()
+            # Also update strategy name if graph_config is updated and contains strategy_config
+            if request.graph_config.strategy_config:
+                updates["strategy"] = request.graph_config.strategy_config.strategy_name
+        
+        if updates:
+            await db_ops.update_run(run_id, updates)
+            updated_run = await db_ops.get_run(run_id) # Fetch updated run
+            if not updated_run:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve updated run.")
+            return RunDetailsResponse(**updated_run.dict())
+        else:
+            return RunDetailsResponse(**run.dict()) # No updates provided, return original run
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to update run {run_id}: {str(e)}")
+
+@router.post("/runs/{run_id}/start", response_model=RunResponse)
+async def start_existing_run(
+    run_id: str,
+    payload: Dict[str, Any] = {}, # Optional payload for runtime config or initial prompt
+    run_manager: RunManager = Depends(get_run_manager),
+    db_ops: Any = Depends(_get_db_ops_dependency)
+):
+    """
+    Start an existing adversarial run. For automatic runs, this begins the loop.
+    For manual runs, this initiates the first turn or resumes from a waiting state.
+    """
+    try:
+        run_response = await run_manager.start_run(run_id, input_payload=payload)
+        return RunResponse(**run_response)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to start run: {str(e)}")
+
+@router.post("/runs/{run_id}/stop", response_model=RunResponse)
+async def stop_running_run(
+    run_id: str,
+    run_manager: RunManager = Depends(get_run_manager)
+):
+    """
+    Stop a currently running adversarial run.
+    """
+    try:
+        response = await run_manager.stop_run(run_id)
+        return RunResponse(**response)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to stop run: {str(e)}")
+
+@router.get("/runs", response_model=ListRunsResponse)
+async def list_all_runs(db_ops: Any = Depends(_get_db_ops_dependency)):
+    """
+    Retrieve a list of all adversarial runs.
+    """
+    try:
+        runs = await db_ops.list_runs()
+        return ListRunsResponse(runs=runs)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list runs: {str(e)}")
+
+@router.get("/runs/{run_id}", response_model=RunDetailsResponse)
+async def get_run_details(
+    run_id: str,
+    db_ops: Any = Depends(_get_db_ops_dependency)
+):
+    """
+    Retrieve detailed information about a specific adversarial run.
+    """
+    try:
+        run = await db_ops.get_run(run_id)
+        if not run:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run with ID {run_id} not found.")
+        return RunDetailsResponse(**run.dict())
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get run details: {str(e)}")
+
+@router.get("/strategies", response_model=ListStrategiesResponse)
+async def list_available_strategies():
+    """
+    List all available attack strategies and their configuration schemas.
+    This allows the frontend to dynamically build forms for strategy configuration.
+    """
+    strategy_registry = get_strategy_registry()
+    strategies_info = []
+    for name, strategy_class in strategy_registry._registry.items():
         try:
-            run_manager = get_run_manager()
-            executor = run_manager.executors.get(run_id)
-            
-            if not executor:
-                raise ValueError(f"Run executor not found for run_id: {run_id}")
-            
-            # Check if the run is indeed in a manual wait state
-            if not executor._manual_wait_active:
-                raise RuntimeError(f"Run {run_id} is not in a manual wait state.")
-            
-            manual_prompt = prompt_data.get("prompt")
-            if not manual_prompt:
-                raise ValueError("Manual prompt is required in the request body.")
-
-            session_id = executor.current_state.get("session_id")
-            if not session_id:
-                # Attempt to find an active session if not directly in state
-                db = get_db()
-                if db:
-                    manual_ops = get_manual_ops(db)
-                    sessions = await manual_ops.list_sessions(run_id, status='active', limit=1)
-                    if sessions:
-                        session_id = sessions[0]["session_id"]
-                    else:
-                        raise ValueError("No active manual session found to associate prompt with.")
-                else:
-                    raise RuntimeError("Database not connected. Cannot find active session.")
-            
-            # --- Use manual_ops to add the turn ---
-            turn_index = executor.current_state.get("turn_index", 0) # Get index from current state if available
-            turn_id = f"{session_id}_turn_{turn_index}"
-            
-            # Add the user's prompt as a new turn
-            await executor.manual_ops.add_turn(
-                session_id=session_id,
-                turn_id=turn_id,
-                turn_index=turn_index,
-                role="attacker",
-                attack_prompt=manual_prompt,
-                metadata={"status": "received_manual_input"}
-            )
-            
-            # --- Update Executor's internal state ---
-            updated_attack_payload = create_simple_attack(data=manual_prompt, metadata= {
-                "source": "manual_input",
-                "timestamp": datetime.utcnow().isoformat(),
-                "session_id": session_id,
-                "turn_id": turn_id
-            })
-            
-            if executor.current_state:
-                executor.current_state["current_turn"]["attack"] = updated_attack_payload
-                executor.current_state["manual_wait_active"] = False
-                executor.current_state["manual_input_required"] = None
-                executor.current_state["routing_signal"] = RoutingSignals.ATTACK
-            
-            # --- Update Database Record ---
-            db = get_db()
-            if db:
-                db_ops = get_db_ops(db)
-                await db_ops.update_run(run_id, {
-                    "status": RunStatus.RUNNING.value,
-                    "manual_prompt_received_at": datetime.utcnow().isoformat()
-                })
-                await executor.manual_ops.update_session(session_id, {
-                    "status": "active",
-                    "turn_count": turn_index + 1
-                })
-
-            # --- Signal Executor to Resume ---
-            executor._manual_input_event.set()
-            executor._manual_wait_active = False
-            executor._manual_input_event.clear()
-
-            return {
-                "message": "Manual prompt received and execution resumed.",
-                "run_id": run_id,
-                "session_id": session_id,
-                "turn_id": turn_id
-            }
-            
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e))
-        except RuntimeError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            description = getattr(strategy_class, '__doc__', '').strip().split('\n')[0] or name
+            schema = strategy_class.get_dependency_schema()
+            strategies_info.append(StrategySchemaResponse(
+                strategy_name=name,
+                schema_definition=schema
+            ))
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            print(f"Warning: Could not get schema for strategy {name}: {e}")
+            strategies_info.append(StrategySchemaResponse(
+                strategy_name=name,
+                schema_definition={"error": f"Could not load schema: {str(e)}"}
+            ))
+    return ListStrategiesResponse(strategies=strategies_info)
 
+@router.get("/providers", response_model=ListProvidersResponse)
+async def list_available_providers():
+    """
+    List all available LLM providers.
+    """
+    provider_registry = get_provider_registry()
+    providers_info = []
+    for name, _ in provider_registry._registry.items(): # Iterate over registered provider names
+        providers_info.append(ProviderInfoResponse(name=name))
+    return ListProvidersResponse(providers=providers_info)
 
-# --- Integration of other manual routes into main router would happen here ---
-# Example:
-# from server.api.manual_routes import router as manual_router
-# router.include_router(manual_router, prefix="/api/v1/runs")
+# Node Discovery Endpoints
 
-# --- Placeholder for additional refined WebSocket event logic ---
-# The actual WebSocket event emission logic will be integrated into the RunExecutor
-# and potentially middleware when specific states are entered/exited.
+# Helper to get node schema (similar to strategy schema)
+def _get_node_schema(node_type: str, node_name: str, node_class: Any) -> Dict[str, Any]:
+    # Implement logic to get schema for a given node class
+    # This might involve a class method on the node or a lookup table
+    # For now, return a placeholder
+    if hasattr(node_class, 'get_node_schema'): # Assuming nodes might have a schema method
+        return node_class.get_node_schema() 
+    return {"type": "object", "properties": {}, "description": f"Schema for {node_name} node of type {node_type}"}
 
-async def emit_manual_wait_events(executor: RunExecutor, session_id: str):
-    """Emits WebSocket events when a run enters a manual wait state."""
-    socketio_manager = get_socketio_manager()
-    if not socketio_manager:
-        print("Warning: Socket.IO manager not initialized. Cannot emit wait events.")
-        return
+@router.get("/nodes/attack", response_model=ListNodeSchemasResponse)
+async def list_attack_nodes():
+    """
+    List available attack node types and their configuration schemas.
+    """
+    node_registry = get_node_registry()
+    nodes_info = []
+    # This part assumes a way to filter nodes by type (e.g., attack, defense, eval)
+    # The registry currently has generic factories. We need a way to know node's *type*.
+    # For now, manually filter based on registered names if convention allows, or enhance registry.
+    # For this example, we'll list all registered nodes and assume relevant ones are 'attack' related.
+    for name, factory in node_registry._registry.items():
+        # Heuristic: If node name contains 'attack' or is default_attack
+        if "attack" in name or name == "default_attack":
+            try:
+                # To get the schema, we might need to instantiate the node, or have a classmethod.
+                # For now, we'll create a dummy instance or assume a schema method exists.
+                # A better registry design would allow querying schema without instantiation.
+                dummy_instance = factory(config={}) # Might require dummy config
+                schema = {} # Replace with actual schema retrieval if node has get_schema()
+                if hasattr(dummy_instance, 'get_node_schema'):
+                    schema = dummy_instance.get_node_schema()
+                
+                nodes_info.append(NodeSchemaResponse(
+                    node_type="attack", # Hardcoded for this endpoint
+                    node_name=name,
+                    schema_definition=schema
+                ))
+            except Exception as e:
+                print(f"Warning: Could not get schema for attack node {name}: {e}")
+                nodes_info.append(NodeSchemaResponse(
+                    node_type="attack",
+                    node_name=name,
+                    schema_definition={"error": f"Could not load schema: {str(e)}"}
+                ))
+    return ListNodeSchemasResponse(nodes=nodes_info)
 
-    run_id = executor.run_id
-    # Event indicating a manual input is required
-    await socketio_manager.broadcast_to_room(
-        run_id,
-        'manual_input_required',
-        {
-            'run_id': run_id,
-            'session_id': session_id,
-            'input_type': executor.current_state.get("manual_input_required", "unknown"),
-            'timeout_seconds': executor.graph_config.attack_node_config.max_attempts_per_turn, 
-            'status': 'waiting'
-        }
-    )
+@router.get("/nodes/defense", response_model=ListNodeSchemasResponse)
+async def list_defense_nodes():
+    """
+    List available defense node types and their configuration schemas.
+    """
+    node_registry = get_node_registry()
+    nodes_info = []
+    for name, factory in node_registry._registry.items():
+        if "defense" in name or name == "default_defense" or name == "defence" or name == "ensemble_defense" or name == "multilayer_defense":
+            try:
+                dummy_instance = factory(config={})
+                schema = {}
+                if hasattr(dummy_instance, 'get_node_schema'):
+                    schema = dummy_instance.get_node_schema()
+                nodes_info.append(NodeSchemaResponse(
+                    node_type="defense",
+                    node_name=name,
+                    schema_definition=schema
+                ))
+            except Exception as e:
+                print(f"Warning: Could not get schema for defense node {name}: {e}")
+                nodes_info.append(NodeSchemaResponse(
+                    node_type="defense",
+                    node_name=name,
+                    schema_definition={"error": f"Could not load schema: {str(e)}"}
+                ))
+    return ListNodeSchemasResponse(nodes=nodes_info)
 
-    # Event indicating the run is paused specifically for input
-    await socketio_manager.broadcast_to_room(
-        run_id,
-        'run_paused_for_input',
-        {
-            'run_id': run_id,
-            'session_id': session_id,
-            'status': RunStatus.WAITING_INPUT.value
-        }
-    )
-
-async def emit_resumption_event(run_id: str, session_id: str, turn_id: str):
-    """Emits WebSocket event when manual input is received and run resumes."""
-    socketio_manager = get_socketio_manager()
-    if not socketio_manager:
-        return
-
-    await socketio_manager.broadcast_to_room(
-        run_id,
-        'manual_input_received',
-        {
-            'run_id': run_id,
-            'session_id': session_id,
-            'turn_id': turn_id,
-            'status': 'processing'
-        }
-    )
-
-# Placeholder for other WebSocket event emissions (e.g., turn updates)
-# These would be integrated into the nodes' execute methods or middleware.
-
+@router.get("/nodes/evaluation", response_model=ListNodeSchemasResponse)
+async def list_evaluation_nodes():
+    """
+    List available evaluation node types and their configuration schemas.
+    """
+    node_registry = get_node_registry()
+    nodes_info = []
+    for name, factory in node_registry._registry.items():
+        if "eval" in name or name == "default_eval" or name == "llm_eval" or name == "server_eval":
+            try:
+                dummy_instance = factory(config={})
+                schema = {}
+                if hasattr(dummy_instance, 'get_node_schema'):
+                    schema = dummy_instance.get_node_schema()
+                nodes_info.append(NodeSchemaResponse(
+                    node_type="evaluation",
+                    node_name=name,
+                    schema_definition=schema
+                ))
+            except Exception as e:
+                print(f"Warning: Could not get schema for evaluation node {name}: {e}")
+                nodes_info.append(NodeSchemaResponse(
+                    node_type="evaluation",
+                    node_name=name,
+                    schema_definition={"error": f"Could not load schema: {str(e)}"}
+                ))
+    return ListNodeSchemasResponse(nodes=nodes_info)

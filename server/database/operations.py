@@ -6,12 +6,16 @@ Database Operations
 from typing import Dict, Any, List, Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from datetime import datetime
+import uuid
 from server.database.models_v2 import (
     RunModel,
     AttackData,
     DefenceData,
     EvaluationData,
-    RunStatistics
+    RunStatistics,
+    ManualTurn,
+    ManualSession,
+    SystemState # Assuming SystemState is also a Pydantic model or dict type
 )
 from server.config.models import GraphConfig # Import GraphConfig for type hinting and Pydantic parsing
 
@@ -20,7 +24,8 @@ class DatabaseOperations:
     """
     Database operations for adversarial testing data.
     
-    Manages separate collections for runs, attacks, defences, and evaluations.
+    Manages separate collections for runs, attacks, defences, evaluations,
+    and specific collections for manual sessions and turns.
     """
     
     def __init__(self, db: AsyncIOMotorDatabase):
@@ -35,6 +40,8 @@ class DatabaseOperations:
         self.attacks = db.attacks
         self.defences = db.defences
         self.evaluations = db.evaluations
+        self.manual_sessions = db.manual_sessions  # New collection for manual sessions
+        self.manual_turns = db.manual_turns      # New collection for manual turns
     
     # ========================================================================
     # Run Operations
@@ -42,7 +49,7 @@ class DatabaseOperations:
     
     async def create_run(self, run_data: Dict[str, Any]) -> str:
         """
-        Create a new run document.
+        Create a new run document. This is for the overall run campaign.
         
         Args:
             run_data: Run data dictionary. Must include 'run_id', 'strategy', and 'graph_config'.
@@ -50,22 +57,19 @@ class DatabaseOperations:
         Returns:
             run_id of created run
         """
-        # Ensure graph_config is included in run_data and properly formatted
         if 'graph_config' not in run_data:
             raise ValueError("Graph configuration is missing in run_data.")
         
         run_doc = {
             **run_data,
             "created_at": datetime.utcnow().isoformat(),
-            "total_iterations": 0,
-            "successful_iterations": 0,
             "status": run_data.get("status", "idle") # Default status to idle if not provided
         }
         
         result = await self.runs.insert_one(run_doc)
         return run_data["run_id"]
     
-    async def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+    async def get_run(self, run_id: str) -> Optional[RunModel]:
         """
         Get run by ID.
         
@@ -73,12 +77,13 @@ class DatabaseOperations:
             run_id: Run identifier
         
         Returns:
-            Run document (as dict) or None. Pydantic parsing is done by the caller if needed.
+            RunModel instance or None.
         """
-        run = await self.runs.find_one({"run_id": run_id})
-        if run:
-            run.pop("_id", None)
-        return run
+        run_doc = await self.runs.find_one({"run_id": run_id})
+        if run_doc:
+            run_doc.pop("_id", None)
+            return RunModel(**run_doc)
+        return None
     
     async def update_run(self, run_id: str, updates: Dict[str, Any]) -> bool:
         """
@@ -91,10 +96,6 @@ class DatabaseOperations:
         Returns:
             True if updated, False if not found
         """
-        # Ensure graph_config is not directly updated here if it's immutable after creation
-        # If updates contains graph_config, it should be handled carefully or disallowed.
-        # For now, we allow updates, but caller should be mindful.
-        
         result = await self.runs.update_one(
             {"run_id": run_id},
             {"$set": updates}
@@ -152,7 +153,7 @@ class DatabaseOperations:
         status: Optional[str] = None,
         limit: int = 100,
         skip: int = 0
-    ) -> List[Dict[str, Any]]:
+    ) -> List[RunModel]:
         """
         List runs with optional filtering.
         
@@ -162,19 +163,16 @@ class DatabaseOperations:
             skip: Number to skip (pagination)
         
         Returns:
-            List of run documents
+            List of RunModel instances
         """
         query = {}
         if status:
             query["status"] = status
         
         cursor = self.runs.find(query).sort("created_at", -1).skip(skip).limit(limit)
-        runs = await cursor.to_list(length=limit)
+        run_docs = await cursor.to_list(length=limit)
         
-        for run in runs:
-            run.pop("_id", None)
-        
-        return runs
+        return [RunModel(**doc.pop("_id", None) or doc) for doc in run_docs]
     
     # ========================================================================
     # Attack Operations
@@ -186,7 +184,8 @@ class DatabaseOperations:
         index: int,
         turn_id: str,
         prompt: str,
-        metadata: Dict[str, Any] = None
+        metadata: Dict[str, Any] = None,
+        timestamp: str = None
     ) -> str:
         """
         Save attack to database.
@@ -197,6 +196,7 @@ class DatabaseOperations:
             turn_id: Turn identifier
             prompt: Attack prompt text
             metadata: Additional metadata
+            timestamp: ISO timestamp when the attack was recorded
         
         Returns:
             Inserted document ID
@@ -207,20 +207,13 @@ class DatabaseOperations:
             "turn_id": turn_id,
             "prompt": prompt,
             "metadata": metadata or {},
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": timestamp or datetime.utcnow().isoformat()
         }
         
         result = await self.attacks.insert_one(attack_doc)
-        
-        # Update run iteration count
-        await self.runs.update_one(
-            {"run_id": run_id},
-            {"$inc": {"total_iterations": 1}}
-        )
-        
         return str(result.inserted_id)
     
-    async def get_attacks(self, run_id: str) -> List[Dict[str, Any]]:
+    async def get_attacks(self, run_id: str) -> List[AttackData]:
         """
         Get all attacks for a run.
         
@@ -228,15 +221,12 @@ class DatabaseOperations:
             run_id: Run identifier
         
         Returns:
-            List of attack documents
+            List of AttackData instances
         """
         cursor = self.attacks.find({"run_id": run_id}).sort("index", 1)
-        attacks = await cursor.to_list(length=None)
+        attack_docs = await cursor.to_list(length=None)
         
-        for attack in attacks:
-            attack.pop("_id", None)
-        
-        return attacks
+        return [AttackData(**doc.pop("_id", None) or doc) for doc in attack_docs]
     
     # ========================================================================
     # Defence Operations
@@ -250,7 +240,8 @@ class DatabaseOperations:
         response: str,
         status_code: int,
         was_blocked: bool,
-        metadata: Dict[str, Any] = None
+        metadata: Dict[str, Any] = None,
+        timestamp: str = None
     ) -> str:
         """
         Save defence response to database.
@@ -263,6 +254,7 @@ class DatabaseOperations:
             status_code: HTTP status code
             was_blocked: Whether request was blocked
             metadata: Additional metadata
+            timestamp: ISO timestamp when the defence response was recorded
         
         Returns:
             Inserted document ID
@@ -275,13 +267,13 @@ class DatabaseOperations:
             "status_code": status_code,
             "was_blocked": was_blocked,
             "metadata": metadata or {},
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": timestamp or datetime.utcnow().isoformat()
         }
         
         result = await self.defences.insert_one(defence_doc)
         return str(result.inserted_id)
     
-    async def get_defences(self, run_id: str) -> List[Dict[str, Any]]:
+    async def get_defences(self, run_id: str) -> List[DefenceData]:
         """
         Get all defences for a run.
         
@@ -289,15 +281,12 @@ class DatabaseOperations:
             run_id: Run identifier
         
         Returns:
-            List of defence documents
+            List of DefenceData instances
         """
         cursor = self.defences.find({"run_id": run_id}).sort("index", 1)
-        defences = await cursor.to_list(length=None)
+        defence_docs = await cursor.to_list(length=None)
         
-        for defence in defences:
-            defence.pop("_id", None)
-        
-        return defences
+        return [DefenceData(**doc.pop("_id", None) or doc) for doc in defence_docs]
     
     # ========================================================================
     # Evaluation Operations
@@ -312,7 +301,8 @@ class DatabaseOperations:
         success: bool,
         category: str,
         feedback: Optional[str] = None,
-        metadata: Dict[str, Any] = None
+        metadata: Dict[str, Any] = None,
+        timestamp: str = None
     ) -> str:
         """
         Save evaluation to database.
@@ -326,6 +316,7 @@ class DatabaseOperations:
             category: Classification category
             feedback: Evaluation reasoning/feedback
             metadata: Additional metadata
+            timestamp: ISO timestamp when the evaluation was recorded
         
         Returns:
             Inserted document ID
@@ -339,21 +330,13 @@ class DatabaseOperations:
             "category": category,
             "feedback": feedback,
             "metadata": metadata or {},
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": timestamp or datetime.utcnow().isoformat()
         }
         
         result = await self.evaluations.insert_one(eval_doc)
-        
-        # Update run statistics
-        if success:
-            await self.runs.update_one(
-                {"run_id": run_id},
-                {"$inc": {"successful_iterations": 1}}
-            )
-        
         return str(result.inserted_id)
     
-    async def get_evaluations(self, run_id: str) -> List[Dict[str, Any]]:
+    async def get_evaluations(self, run_id: str) -> List[EvaluationData]:
         """
         Get all evaluations for a run.
         
@@ -361,85 +344,230 @@ class DatabaseOperations:
             run_id: Run identifier
         
         Returns:
-            List of evaluation documents
+            List of EvaluationData instances
         """
         cursor = self.evaluations.find({"run_id": run_id}).sort("index", 1)
-        evals = await cursor.to_list(length=None)
+        eval_docs = await cursor.to_list(length=None)
         
-        for eval_doc in evals:
-            eval_doc.pop("_id", None)
-        
-        return evals
-    
-    # ========================================================================
-    # Combined Operations
-    # ========================================================================
-    
-    async def get_run_with_data(self, run_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get run with all associated data.
-        
-        Args:
-            run_id: Run identifier
-        
-        Returns:
-            Dictionary with run, attacks, defences, evaluations
-        """
-        run = await self.get_run(run_id)
-        if not run:
-            return None
-        
-        attacks = await self.get_attacks(run_id)
-        defences = await self.get_defences(run_id)
-        evaluations = await self.get_evaluations(run_id)
-        
-        return {
-            "run": run,
-            "attacks": attacks,
-            "defences": defences,
-            "evaluations": evaluations
-        }
-    
-    async def get_run_statistics(self, run_id: str) -> Optional[RunStatistics]:
-        """
-        Calculate statistics for a run.
-        
-        Args:
-            run_id: Run identifier
-        
-        Returns:
-            RunStatistics or None
-        """
-        run = await self.get_run(run_id)
-        if not run:
-            return None
-        
-        evaluations = await self.get_evaluations(run_id)
-        defences = await self.get_defences(run_id)
-        
-        if not evaluations:
-            return None
-        
-        scores = [e["score"] for e in evaluations]
-        successes = [e["success"] for e in evaluations]
-        categories = [e["category"] for e in evaluations]
-        
-        blocked_count = sum(1 for d in defences if d.get("was_blocked", False))
-        
-        return RunStatistics(
-            run_id=run_id,
-            total_attacks=len(evaluations),
-            total_defences=len(defences),
-            total_evaluations=len(evaluations),
-            success_rate=sum(successes) / len(successes) if successes else 0.0,
-            average_score=sum(scores) / len(scores) if scores else 0.0,
-            best_score=max(scores) if scores else 0.0,
-            worst_score=min(scores) if scores else 0.0,
-            blocked_count=blocked_count,
-            blocked_rate=blocked_count / len(defences) if defences else 0.0,
-            categories={cat: categories.count(cat) for cat in set(categories)}
-        )
+        return [EvaluationData(**doc.pop("_id", None) or doc) for doc in eval_docs]
 
+    # ========================================================================
+    # Manual Session Operations
+    # ========================================================================
+
+    async def create_manual_session(
+        self,
+        run_id: str,
+        name: str,
+        description: str = "",
+        initial_state_checkpoint: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Create a new manual interaction session.
+
+        Args:
+            run_id: The ID of the parent run.
+            name: A human-readable name for the session.
+            description: Optional description for the session.
+            initial_state_checkpoint: The initial LangGraph SystemState to save (optional).
+
+        Returns:
+            The newly created session_id.
+        """
+        session_id = f"sess_{uuid.uuid4().hex[:12]}"
+        session_doc = {
+            "session_id": session_id,
+            "run_id": run_id,
+            "name": name,
+            "description": description,
+            "status": "active",
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+            "turn_ids": [],
+            "total_turns": 0,
+            "state_checkpoint": initial_state_checkpoint  # Save initial state
+        }
+        await self.manual_sessions.insert_one(session_doc)
+        return session_id
+    
+    async def get_manual_session(self, session_id: str) -> Optional[ManualSession]:
+        """
+        Get a manual session by its ID.
+        """
+        session_doc = await self.manual_sessions.find_one({"session_id": session_id})
+        if session_doc:
+            session_doc.pop("_id", None)
+            return ManualSession(**session_doc)
+        return None
+
+    async def update_manual_session_state(
+        self,
+        session_id: str,
+        run_id: str, # Added run_id for consistency/lookup
+        state_checkpoint: SystemState,
+        final_score: Optional[float] = None,
+        best_score: Optional[float] = None
+    ) -> bool:
+        """
+        Update the state checkpoint and final scores for a manual session.
+        """
+        updates = {
+            "state_checkpoint": state_checkpoint,
+            "updated_at": datetime.utcnow().isoformat()
+        }
+        if final_score is not None:
+            updates["final_score"] = final_score
+        if best_score is not None:
+            updates["best_score"] = best_score
+        
+        result = await self.manual_sessions.update_one(
+            {"session_id": session_id, "run_id": run_id},
+            {"$set": updates}
+        )
+        return result.modified_count > 0
+    
+    async def get_last_manual_turn_for_session(self, session_id: str) -> Optional[ManualTurn]:
+        """
+        Get the last manual turn for a given session, ordered by index.
+        """
+        turn_doc = await self.manual_turns.find(
+            {"session_id": session_id}
+        ).sort("index", -1).limit(1).to_list(length=1)
+        
+        if turn_doc:
+            return ManualTurn(**turn_doc[0].pop("_id", None) or turn_doc[0])
+        return None
+
+    # ========================================================================
+    # Manual Turn Operations
+    # ========================================================================
+
+    async def create_manual_turn(
+        self,
+        session_id: str,
+        turn_id: str,
+        run_id: str,
+        index: int,
+        turn_data: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Create a new manual turn document.
+        """
+        manual_turn_doc = {
+            "session_id": session_id,
+            "run_id": run_id,
+            "turn_id": turn_id,
+            "index": index,
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+            # Fields for attack, defence, eval data IDs will be updated later
+            "attack_data_id": None,
+            "defence_data_id": None,
+            "evaluation_data_id": None,
+            "state_checkpoint": turn_data # Initially save the turn_data as a partial state
+        }
+        await self.manual_turns.insert_one(manual_turn_doc)
+        
+        # Add turn_id to the manual session's turn_ids list
+        await self.manual_sessions.update_one(
+            {"session_id": session_id},
+            {"$push": {"turn_ids": turn_id}, "$inc": {"total_turns": 1}, "$set": {"updated_at": datetime.utcnow().isoformat()}}
+        )
+        return turn_id
+    
+    async def get_manual_turn(self, turn_id: str) -> Optional[ManualTurn]:
+        """
+        Get a manual turn by its ID.
+        """
+        turn_doc = await self.manual_turns.find_one({"turn_id": turn_id})
+        if turn_doc:
+            turn_doc.pop("_id", None)
+            return ManualTurn(**turn_doc)
+        return None
+
+    async def get_manual_turns_for_session(self, session_id: str) -> List[ManualTurn]:
+        """
+        Get all manual turns for a given session, ordered by index.
+        """
+        cursor = self.manual_turns.find({"session_id": session_id}).sort("index", 1)
+        turn_docs = await cursor.to_list(length=None)
+        return [ManualTurn(**doc.pop("_id", None) or doc) for doc in turn_docs]
+    
+    async def update_manual_turn_data(
+        self,
+        session_id: str,
+        turn_id: str,
+        turn_index: int, # Explicitly pass turn_index to update/verify
+        attack_prompt: Optional[str] = None,
+        attack_metadata: Optional[Dict[str, Any]] = None,
+        defence_response: Optional[str] = None,
+        defence_status_code: Optional[int] = None,
+        defence_was_blocked: Optional[bool] = None,
+        defence_metadata: Optional[Dict[str, Any]] = None,
+        evaluation_score: Optional[float] = None,
+        evaluation_success: Optional[bool] = None,
+        evaluation_category: Optional[str] = None,
+        evaluation_feedback: Optional[str] = None,
+        evaluation_metadata: Optional[Dict[str, Any]] = None,
+        state_checkpoint: Optional[Dict[str, Any]] = None # Allow updating the turn's checkpoint
+    ) -> bool:
+        """
+        Update data within an existing manual turn document.
+        This method is designed to be called by middlewares or nodes as data becomes available.
+        It also updates the corresponding AttackData, DefenceData, EvaluationData documents.
+        """
+        updates = {"updated_at": datetime.utcnow().isoformat()}
+        
+        # Update attack data and link to turn
+        if attack_prompt is not None:
+            attack_id = await self.save_attack(
+                run_id=(await self.get_manual_session(session_id)).run_id, # Fetch run_id from session
+                index=turn_index,
+                turn_id=turn_id,
+                prompt=attack_prompt,
+                metadata=attack_metadata
+            )
+            updates["attack_data_id"] = attack_id
+
+        # Update defence data and link to turn
+        if defence_response is not None:
+            defence_id = await self.save_defence(
+                run_id=(await self.get_manual_session(session_id)).run_id,
+                index=turn_index,
+                turn_id=turn_id,
+                response=defence_response,
+                status_code=defence_status_code,
+                was_blocked=defence_was_blocked,
+                metadata=defence_metadata
+            )
+            updates["defence_data_id"] = defence_id
+
+        # Update evaluation data and link to turn
+        if evaluation_score is not None:
+            evaluation_id = await self.save_evaluation(
+                run_id=(await self.get_manual_session(session_id)).run_id,
+                index=turn_index,
+                turn_id=turn_id,
+                score=evaluation_score,
+                success=evaluation_success,
+                category=evaluation_category,
+                feedback=evaluation_feedback,
+                metadata=evaluation_metadata
+            )
+            updates["evaluation_data_id"] = evaluation_id
+            
+        if state_checkpoint is not None:
+            updates["state_checkpoint"] = state_checkpoint
+            
+        result = await self.manual_turns.update_one(
+            {"session_id": session_id, "turn_id": turn_id},
+            {"$set": updates}
+        )
+        return result.modified_count > 0
+    
+    # ========================================================================
+    # Convenience function
+    # ========================================================================
 
 # Convenience function
 def get_db_ops(db: AsyncIOMotorDatabase) -> DatabaseOperations:

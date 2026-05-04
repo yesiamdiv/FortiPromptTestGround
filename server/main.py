@@ -1,18 +1,22 @@
-
-"""Main FastAPI Application - Updated with Startup Registrations"""
+"""
+Main FastAPI Application - Updated with API Route Integration and Unified Registry"""
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import os
 
-from server.api.routes import router as main_router
-from server.api.attack_routes import router as attack_router # Assuming these exist
-from server.api.defense_routes import router as defense_router # Assuming these exist
+# Import API routers
+from server.api.routes import router as api_router # Main API routes
+from server.api.manual_routes import router as manual_router # Import manual routes
+
+# Database and WebSocket imports
 from server.database.connection import init_db, close_db, get_db
 from server.websocket.socketio_manager import get_socketio_manager
 from server.run_manager import get_run_manager
-from engine.registry import register_default_nodes, register_default_strategies # Import registration functions
+
+# Unified registry for all components
+from engine.registry import register_all_components # Use unified registration
 
 
 # ============================================================================
@@ -45,20 +49,16 @@ async def lifespan(app: FastAPI):
     run_manager = get_run_manager()
     print("✓ Run manager initialized")
     
-    # 4. Initialize Registries
-    # This is crucial to make nodes and strategies available for dynamic loading.
+    # 4. Initialize Registries (nodes, strategies, providers)
     try:
-        await register_default_nodes() # Register default nodes
-        print("✓ Node registry populated")
-        await register_default_strategies() # Register default strategies
-        print("✓ Strategy registry populated")
+        register_all_components() # Call the unified registration function
+        print("✓ All components registered (nodes, strategies, providers)")
     except Exception as e:
         print(f"⚠ Failed to initialize registries: {e}")
 
-    # 5. Restore existing runs (from previous implementation)
-    # This part might need adjustments if run restoration logic changes significantly
-    # based on the new dynamic graph configuration.
-    await restore_existing_runs(socketio_manager, run_manager)
+    # 5. Restore existing runs (This part might need re-evaluation based on new state management)
+    # Consider re-implementing if needed, ensuring it aligns with manual/automatic distinctions.
+    # For now, skipping direct run restoration in lifespan to focus on API/Middleware setup.
     
     print("🎉 Server ready to accept requests!\n")
     
@@ -82,78 +82,6 @@ async def lifespan(app: FastAPI):
     print("✓ Database closed")
     
     print("👋 Shutdown complete")
-
-
-async def restore_existing_runs(socketio_manager, run_manager):
-    """
-    Restore existing runs on startup.
-    
-    Fetches runs from DB, creates Socket.IO rooms, and tracks active runs.
-    The logic for handling interrupted 'running' states (e.g., auto-resume)
-    might need further refinement based on the new dynamic graph setup.
-    """
-    print("\n📦 Restoring existing runs...")
-    
-    db = get_db()
-    if db is None:
-        print("⚠ Cannot restore runs - database not connected")
-        return
-    
-    try:
-        runs_cursor = db.runs.find({})
-        runs = await runs_cursor.to_list(length=None)
-        
-        print(f"Found {len(runs)} existing runs in database")
-        
-        stats = {
-            "total": len(runs),
-            "idle": 0,
-            "running": 0,
-            "completed": 0,
-            "failed": 0,
-            "stopped": 0,
-            "rooms_created": 0
-        }
-        
-        for run in runs:
-            run_id = run["run_id"]
-            status = run.get("status", "idle")
-            
-            stats[status] = stats.get(status, 0) + 1
-            
-            # Track Socket.IO rooms (manager handles actual room creation on join)
-            if run_id not in socketio_manager.run_rooms:
-                socketio_manager.run_rooms[run_id] = set()
-                stats["rooms_created"] += 1
-            
-            # Handle interrupted runs ('running' status)
-            if status == "running":
-                print(f"  ⚠ Run {run_id} was interrupted (status: running)")
-                # For now, we mark them as stopped. Auto-resume needs careful implementation
-                # with the dynamic graph and strategy loading.
-                from server.database.operations import get_db_ops
-                db_ops = get_db_ops(db)
-                await db_ops.update_run(run_id, {
-                    "status": "stopped",
-                    "error": "Server restart - run was interrupted"
-                })
-                print(f"    → Marked as stopped")
-
-        print("\n📊 Run restoration summary:")
-        print(f"  Total runs: {stats['total']}")
-        print(f"  Idle: {stats.get('idle', 0)}")
-        print(f"  Running: {stats.get('running', 0)} (marked as stopped)")
-        print(f"  Paused: {stats.get('paused', 0)}")
-        print(f"  Completed: {stats.get('completed', 0)}")
-        print(f"  Failed: {stats.get('failed', 0)}")
-        print(f"  Stopped: {stats.get('stopped', 0)}")
-        print(f"  Socket.IO rooms tracked: {stats['rooms_created']}")
-        print("")
-        
-    except Exception as e:
-        print(f"❌ Error during run restoration: {e}")
-        import traceback
-        traceback.print_exc()
 
 
 # ============================================================================
@@ -187,15 +115,14 @@ app.add_middleware(
 # ============================================================================
 
 # Include API routers
-app.include_router(main_router, prefix="/api/v1")
-app.include_router(attack_router, prefix="/api/v1")
-app.include_router(defense_router, prefix="/api/v1")
+app.include_router(api_router, prefix="/api/v1")       # Main API routes for runs, strategies, etc.
+app.include_router(manual_router, prefix="/api/v1")    # Manual session and turn management routes
 
 
 # Root endpoint
 @app.get("/")
 async def root():
-    """Root endpoint"""
+    """Root endpoint providing basic server info."""
     return {
         "name": "Adversarial Testing Engine",
         "version": "2.0.0",
@@ -203,14 +130,15 @@ async def root():
         "docs": "/docs",
         "api": "/api/v1",
         "socket_io": "/socket.io",
-        "changes": [
-            "Separated run creation from execution",
-            "Added lifecycle endpoints: start, pause, resume, stop",
-            "Added attack and defense configuration endpoints",
-            "Auto-restore runs on startup",
-            "Per-run engine isolation",
-            "Dynamic graph and strategy loading",
-            "Structured configuration management"
+        "description": "A framework for automated adversarial testing of AI systems.",
+        "tasks_completed": [
+            "Strategy interface refactoring",
+            "Provider registry implementation",
+            "Middleware architecture for manual/auto modes",
+            "API endpoints for run and manual session management",
+            "WebSocket event broadcasting for UI feedback",
+            "Corrected configuration data flow and graph instantiation",
+            "Enhanced manual run state management"
         ]
     }
 
