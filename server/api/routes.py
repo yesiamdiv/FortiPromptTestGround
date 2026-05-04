@@ -12,7 +12,7 @@ from server.api.schemas import (
 )
 from server.run_manager import get_run_manager, RunManager, RunStatus
 from server.database.connection import get_db
-from server.database.operations import get_db_ops
+from server.database.operations import DatabaseOperations, get_db_ops
 from engine.registry import get_strategy_registry, get_node_registry
 from engine.provider_registry import get_provider_registry # Import provider registry
 from server.config.models import GraphConfig, AttackNodeConfig, DefenseNodeConfig, EvaluationNodeConfig # For GraphConfig validation
@@ -23,7 +23,7 @@ router = APIRouter()
 
 async def _get_db_ops_dependency():
     db = get_db()
-    if not db:
+    if db is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database not connected.")
     return get_db_ops(db)
 
@@ -31,7 +31,7 @@ async def _get_db_ops_dependency():
 async def create_new_run(
     request: CreateRunRequest,
     run_manager: RunManager = Depends(get_run_manager),
-    db_ops: Any = Depends(_get_db_ops_dependency)
+    db_ops:DatabaseOperations = Depends(_get_db_ops_dependency)
 ):
     """
     Create a new adversarial run.
@@ -44,8 +44,13 @@ async def create_new_run(
             "run_id": run_id,
             "name": request.name,
             "description": request.description,
-            "strategy": request.graph_config.strategy_config.strategy_name, # Extract from graph_config
-            "graph_config": request.graph_config.dict(), # Store the full graph_config
+            "graph_config": {
+                **request.config.model_dump(exclude_unset=True), # Exclude unset fields
+                "strategy_config": {
+                    "strategy_name": request.config.strategy_config.strategy_name,
+                    "strategy_params": request.config.strategy_config.strategy_params or {}
+                }
+            },
             "created_at": datetime.utcnow().isoformat(),
             "status": RunStatus.IDLE.value # New runs are initially idle
         }
@@ -60,7 +65,7 @@ async def create_new_run(
 async def update_run_config(
     run_id: str,
     request: UpdateRunRequest,
-    db_ops: Any = Depends(_get_db_ops_dependency)
+    db_ops: DatabaseOperations = Depends(_get_db_ops_dependency)
 ):
     """
     Update configuration for an existing run (e.g., strategy parameters).
@@ -76,11 +81,8 @@ async def update_run_config(
             updates["name"] = request.name
         if request.description is not None:
             updates["description"] = request.description
-        if request.graph_config is not None:
-            updates["graph_config"] = request.graph_config.dict()
-            # Also update strategy name if graph_config is updated and contains strategy_config
-            if request.graph_config.strategy_config:
-                updates["strategy"] = request.graph_config.strategy_config.strategy_name
+        if request.strategy_params is not None:
+            updates["graph_config.strategy_config.strategy_params"] = request.strategy_params
         
         if updates:
             await db_ops.update_run(run_id, updates)

@@ -104,9 +104,6 @@ class RunModel(BaseModel):
     status: Literal["idle", "running", "completed", "failed", "stopped"] = Field(default="idle", description="Current status of the run")
     description: str = Field(default="", description="Detailed description of the run's purpose")
     
-    # Strategy and components involved
-    strategy: str = Field(..., description="Name of the strategy employed for this run")
-    components: List[str] = Field(default_factory=list, description="List of components/tools used in the run")
     
     # Graph and overall execution configuration
     graph_config: GraphConfig = Field(..., description="Defines the graph topology, node types, and strategy-specific configurations")

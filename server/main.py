@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI):
         register_all_components() # Call the unified registration function
         print("✓ All components registered (nodes, strategies, providers)")
     except Exception as e:
-        print(f"⚠ Failed to initialize registries: {e}")
+        raise e # Re-raise for detailed traceback
 
     # 5. Restore existing runs (This part might need re-evaluation based on new state management)
     # Consider re-implementing if needed, ensuring it aligns with manual/automatic distinctions.
@@ -103,7 +103,7 @@ app = FastAPI(
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -163,7 +163,7 @@ if __name__ == "__main__":
     
     host = os.getenv("SERVER_HOST", "0.0.0.0")
     port = int(os.getenv("SERVER_PORT", "8000"))
-    reload = os.getenv("SERVER_RELOAD", "false").lower() == "true"
+    reload = os.getenv("SERVER_RELOAD", "true").lower() == "true"
     
     print(f"\n🌐 Starting server on http://{host}:{port}")
     print(f"📚 API docs available at http://{host}:{port}/docs")

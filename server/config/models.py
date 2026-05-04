@@ -52,7 +52,6 @@ class GraphConfig(BaseModel):
                 "graph_type": "automatic",
                 "attack_node_config": {
                     "node_type": "llm_attack",
-                    "max_attempts_per_turn": 3
                 },
                 "defense_node_config": {
                     "node_type": "heuristic_defense"
@@ -64,6 +63,5 @@ class GraphConfig(BaseModel):
                     "strategy_name": "iterative_improvement",
                     "strategy_params": {"learning_rate": 0.01, "temperature": 0.7}
                 },
-                "max_total_iterations": 100
             }
         }

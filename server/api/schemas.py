@@ -13,13 +13,13 @@ from server.database.models_v2 import RunModel, ManualSession, ManualTurn, Attac
 class CreateRunRequest(BaseModel):
     name: str = Field(..., description="Human-readable name for the run.")
     description: Optional[str] = Field(None, description="Optional detailed description.")
-    graph_config: GraphConfig = Field(..., description="Configuration defining the graph topology and strategy.")
+    config: GraphConfig = Field(..., description="Configuration defining the graph topology and strategy.")
     payload: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Initial payload data for the run. Can contain runtime_config.")
 
 class UpdateRunRequest(BaseModel):
     name: Optional[str] = Field(None, description="New human-readable name for the run.")
     description: Optional[str] = Field(None, description="New detailed description for the run.")
-    graph_config: Optional[GraphConfig] = Field(None, description="New configuration defining the graph topology and strategy.")
+    strategy_params: Optional[Dict[str, Any]] = Field(None, description="Parameters to update for the run's strategy.")
 
 class RunResponse(BaseModel):
     run_id: str

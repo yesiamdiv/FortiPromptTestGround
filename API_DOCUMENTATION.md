@@ -16,8 +16,23 @@ All API endpoints are prefixed with `/api/v1`.
     {
         "name": "string",
         "description": "Optional detailed description for the run.",
-        "graph_config": { /* GraphConfig object, defines topology and strategy */ },
-        "payload": { /* Initial payload for the run, e.g., global runtime_config */ }
+        "config": { 
+            "graph_type": "automatic",// or manual
+            "attack_node_config": {
+                    "node_type": "llm_attack",
+                },
+                "defense_node_config": {
+                    "node_type": "heuristic_defense"
+                },
+                "evaluation_node_config": {
+                    "node_type": "llm_eval"
+                },
+                "strategy_config": {
+                    "strategy_name": "iterative_improvement",
+                    "strategy_params": {/* optionaly empty for this api*/}
+                },
+        },
+        "payload": { /* optional payload*/ }
     }
     ```
 *   **Responses (`RunResponse`):**
@@ -34,7 +49,7 @@ All API endpoints are prefixed with `/api/v1`.
     {
         "name": "Optional new name",
         "description": "Optional new description",
-        "graph_config": { /* Optional new GraphConfig object, e.g., with updated strategy_params */ }
+        "strategy_params": { /* Optional new strategy_params from the dynamic list of strategy dependencies*/ }
     }
     ```
 *   **Responses (`RunDetailsResponse`):**

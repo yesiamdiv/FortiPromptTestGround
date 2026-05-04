@@ -14,10 +14,11 @@ from server.database.models_v2 import (
     EvaluationData,
     RunStatistics,
     ManualTurn,
-    ManualSession,
-    SystemState # Assuming SystemState is also a Pydantic model or dict type
+    ManualSession
 )
 from server.config.models import GraphConfig # Import GraphConfig for type hinting and Pydantic parsing
+from engine.state_schema import SystemState # Corrected import for SystemState
+
 
 
 class DatabaseOperations:
@@ -172,7 +173,7 @@ class DatabaseOperations:
         cursor = self.runs.find(query).sort("created_at", -1).skip(skip).limit(limit)
         run_docs = await cursor.to_list(length=limit)
         
-        return [RunModel(**doc.pop("_id", None) or doc) for doc in run_docs]
+        return [RunModel(**{k: v for k, v in doc.items() if k != "_id"}) for doc in run_docs]
     
     # ========================================================================
     # Attack Operations
@@ -226,8 +227,7 @@ class DatabaseOperations:
         cursor = self.attacks.find({"run_id": run_id}).sort("index", 1)
         attack_docs = await cursor.to_list(length=None)
         
-        return [AttackData(**doc.pop("_id", None) or doc) for doc in attack_docs]
-    
+        return [AttackData(**{k: v for k, v in doc.items() if k != "_id"}) for doc in attack_docs]    
     # ========================================================================
     # Defence Operations
     # ========================================================================
@@ -286,7 +286,8 @@ class DatabaseOperations:
         cursor = self.defences.find({"run_id": run_id}).sort("index", 1)
         defence_docs = await cursor.to_list(length=None)
         
-        return [DefenceData(**doc.pop("_id", None) or doc) for doc in defence_docs]
+        # return [DefenceData(**doc.pop("_id", None) or doc) for doc in defence_docs]
+        return [DefenceData(**{k: v for k, v in doc.items() if k != "_id"}) for doc in defence_docs]
     
     # ========================================================================
     # Evaluation Operations
@@ -349,7 +350,8 @@ class DatabaseOperations:
         cursor = self.evaluations.find({"run_id": run_id}).sort("index", 1)
         eval_docs = await cursor.to_list(length=None)
         
-        return [EvaluationData(**doc.pop("_id", None) or doc) for doc in eval_docs]
+        # return [EvaluationData(**doc.pop("_id", None) or doc) for doc in eval_docs]
+        return [EvaluationData(**{k: v for k, v in doc.items() if k != "_id"}) for doc in eval_docs]
 
     # ========================================================================
     # Manual Session Operations
@@ -435,7 +437,7 @@ class DatabaseOperations:
         ).sort("index", -1).limit(1).to_list(length=1)
         
         if turn_doc:
-            return ManualTurn(**turn_doc[0].pop("_id", None) or turn_doc[0])
+            return ManualTurn(**{k: v for k, v in turn_doc[0].items() if k != "_id"})
         return None
 
     # ========================================================================
@@ -491,7 +493,7 @@ class DatabaseOperations:
         """
         cursor = self.manual_turns.find({"session_id": session_id}).sort("index", 1)
         turn_docs = await cursor.to_list(length=None)
-        return [ManualTurn(**doc.pop("_id", None) or doc) for doc in turn_docs]
+        return [ManualTurn(**{k: v for k, v in doc.items() if k != "_id"}) for doc in turn_docs]
     
     async def update_manual_turn_data(
         self,
