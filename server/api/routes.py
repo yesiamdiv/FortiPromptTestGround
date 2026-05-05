@@ -98,6 +98,22 @@ async def update_run_config(
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to update run {run_id}: {str(e)}")
 
+@router.delete("/runs/{run_id}")
+async def delet_run(
+    run_id: str,
+    db_ops: DatabaseOperations = Depends(_get_db_ops_dependency)
+    ):
+    """
+    Delete a run from the database but not its releted data (for now)
+    """
+    try:
+        if await db_ops.delete_run(run_id):
+            return {"message":f"{run_id} is deleted"}
+        else: 
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to delete run: {str(e)}")
+    except Exception as e:
+        raise e
+
 @router.post("/runs/{run_id}/start", response_model=RunResponse)
 async def start_existing_run(
     run_id: str,
