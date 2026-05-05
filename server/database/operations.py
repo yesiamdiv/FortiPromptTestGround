@@ -103,6 +103,21 @@ class DatabaseOperations:
         )
         return result.modified_count > 0
     
+    async def delete_run(
+        self,
+        run_id: str     
+    ) -> bool:
+        """
+        Delete a runs record, not its related data (for now)
+        
+        Args:
+            run_id: Run identifier
+
+        Returns:
+            True or false
+        """
+        return await self.runs.delete_one({"run_id": run_id})
+
     async def mark_run_completed(
         self,
         run_id: str,
