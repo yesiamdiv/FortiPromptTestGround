@@ -1,17 +1,20 @@
 """
-Default Strategy Implementation"""
+Default Strategy Implementation
+"""
 
 from typing import Dict, Any
 import random
 from strategies.base import AttackStrategy
 from engine.domain_models import create_simple_attack
 from engine.state_schema import create_turn_data, RoutingSignals
+from engine.debug_utils import debug, tracer, step, warn, err
 
 
 class DefaultStrategy(AttackStrategy):
     """Simple no-op strategy for testing without LLM calls"""
     
     def __init__(self, config: Dict[str, Any] = None):
+        tracer("DefaultStrategy.__init__")
         default_config = {
             "max_attempts": 1,
             "attack_prefix": "Test attack",
@@ -20,10 +23,12 @@ class DefaultStrategy(AttackStrategy):
         if config:
             default_config.update(config)
         super().__init__(default_config)
+        debug("DefaultStrategy initialized", max_attempts=self.config.get("max_attempts"))
     
     def initialize(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        print(f"Initializing DefaultStrategy for run with intent: {state.get('payload', {}).get('intent')}")
+        tracer("DefaultStrategy.initialize")
         intent = state.get("payload", {}).get("intent", "default test")
+        debug("Initializing strategy", intent=intent)
         if "strategy_context" not in state or not state["strategy_context"]:
             state["strategy_context"] = {}
         state["strategy_context"].update({
@@ -34,19 +39,12 @@ class DefaultStrategy(AttackStrategy):
         })
         if "routing_signal" not in state:
             state["routing_signal"] = RoutingSignals.CONTINUE
+        step("Strategy initialized", intent=intent)
         return state
 
     async def execute_generation(self, state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Generate a simple random attack without LLM.
-        
-        Args:
-            state: Current system state
-            config: Runtime configuration
-        
-        Returns:
-            Updated turn data with random attack
-        """
+        """Generate a simple random attack without LLM."""
+        tracer("DefaultStrategy.execute_generation")
         context = state["strategy_context"]
         turn_id = f"turn_{context['attempt_count'] + 1}"
         
@@ -61,6 +59,7 @@ class DefaultStrategy(AttackStrategy):
         prefix = self.config.get("attack_prefix", "Test attack")
         template = random.choice(attack_templates)
         attack_text = f"{prefix}: {template}"
+        debug("Generated attack text", template=template[:50])
         
         attack = create_simple_attack(
             attack_text,
@@ -77,6 +76,7 @@ class DefaultStrategy(AttackStrategy):
             "last_attack": attack_text
         }
         
+        step("Attack generation complete", turn_id=turn_id)
         return {
             "current_turn": turn,
             "strategy_context": updated_context
@@ -84,10 +84,12 @@ class DefaultStrategy(AttackStrategy):
     
     def route(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Determine the next routing signal and update context based on state."""
+        tracer("DefaultStrategy.route")
         context = state.get("strategy_context", {})
         should_continue = context["attempt_count"] < context.get("max_attempts", 1)
         signal = RoutingSignals.ATTACK if should_continue else RoutingSignals.END
         updated_context = context.copy()
+        debug("Routing decision", signal=signal, should_continue=should_continue)
         return {
             "routing_signal": signal,
             "strategy_context": updated_context

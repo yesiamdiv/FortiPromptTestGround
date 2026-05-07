@@ -7,6 +7,7 @@ Manages MongoDB connection for the adversarial testing engine.
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from typing import Optional
 import os
+from engine.debug_utils import checkpoint, debug, tracer, step
 
 
 class DatabaseConnection:
@@ -29,11 +30,14 @@ class DatabaseConnection:
             database_name: Database name (defaults to env var)
         """
         if cls._client is not None:
+            debug("Database already connected")
             return cls._db
         
         # Get connection details from env if not provided
         mongo_url = mongo_url or os.getenv("MONGODB_URI", "mongodb://localhost:27017")
         database_name = database_name or os.getenv("MONGO_DB_NAME", "adversarial_testing")
+        
+        tracer("Connecting to MongoDB", mongo_url=mongo_url, database_name=database_name)
         
         # Create client
         cls._client = AsyncIOMotorClient(mongo_url)
@@ -42,7 +46,7 @@ class DatabaseConnection:
         # Test connection
         await cls._client.admin.command('ping')
         
-        print(f"Connected to MongoDB: {database_name}")
+        step("Connected to MongoDB", database_name=database_name)
         
         # Create indexes
         await cls._create_indexes()
@@ -52,6 +56,8 @@ class DatabaseConnection:
     @classmethod
     async def _create_indexes(cls):
         """Create database indexes for performance"""
+        tracer("Creating database indexes")
+        
         if cls._db is None:
             return
         
@@ -71,7 +77,7 @@ class DatabaseConnection:
         await cls._db.evaluations.create_index([("run_id", 1), ("score", -1)])
         await cls._db.evaluations.create_index("category")
         
-        print("Database indexes created")
+        checkpoint("Database indexes created")
     
     @classmethod
     def get_database(cls) -> Optional[AsyncIOMotorDatabase]:
@@ -81,16 +87,18 @@ class DatabaseConnection:
         Returns:
             Database instance or None if not connected
         """
+        debug("Getting database instance")
         return cls._db
     
     @classmethod
     async def disconnect(cls):
         """Close database connection"""
+        tracer("Disconnecting from MongoDB")
         if cls._client:
             cls._client.close()
             cls._client = None
             cls._db = None
-            print("Disconnected from MongoDB")
+            debug("Disconnected from MongoDB")
 
 
 # Convenience function for getting database
@@ -105,6 +113,7 @@ async def init_db(mongo_uri: str = None, database_name: str = None) -> AsyncIOMo
     Returns:
         Database instance
     """
+    tracer("Initializing database")
     return await DatabaseConnection.connect(mongo_uri, database_name)
 
 
@@ -120,4 +129,5 @@ def get_db() -> Optional[AsyncIOMotorDatabase]:
 
 async def close_db():
     """Close database connection"""
+    tracer("Closing database connection")
     await DatabaseConnection.disconnect()

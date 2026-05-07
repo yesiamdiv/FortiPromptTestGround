@@ -21,6 +21,7 @@ from strategies.manual_strategy import ManualStrategy # Import ManualStrategy
 
 # Import provider registry and registration function
 from engine.provider_registry import get_provider_registry, register_all_providers
+from engine.debug_utils import debug, tracer, step, checkpoint, warn, err
 
 
 # --- Node Registry ---
@@ -35,14 +36,18 @@ class NodeRegistry:
     def register(self, name: str, factory: NodeFactory):
         """Register a node factory."""
         if name in self._registry:
+            warn(f"Node '{name}' already registered, overwriting")
             raise ValueError(f"Node '{name}' already registered.")
         self._registry[name] = factory
+        debug("Node registered", name=name)
 
     def get(self, name: str, **kwargs: Any) -> BaseAdversarialNode:
         """Get and instantiate a node using its factory."""
         factory = self._registry.get(name)
         if not factory:
+            err(f"Node factory '{name}' not found", available=list(self._registry.keys()))
             raise ValueError(f"Node factory '{name}' not found.")
+        debug("Node instantiated", name=name)
         return factory(**kwargs)
 
 _node_registry = NodeRegistry()
@@ -62,8 +67,10 @@ class StrategyRegistry:
     def register(self, name: str, strategy_class: StrategyClass):
         """Register a strategy class."""
         if name in self._registry:
+            warn(f"Strategy '{name}' already registered, overwriting")
             raise ValueError(f"Strategy '{name}' already registered.")
         self._registry[name] = strategy_class
+        debug("Strategy registered", name=name)
 
     def get(self, name: str, config: Dict[str, Any], **kwargs: Any) -> Any:
         """
@@ -76,8 +83,9 @@ class StrategyRegistry:
         """
         strategy_class = self._registry.get(name)
         if not strategy_class:
+            err(f"Strategy class '{name}' not found", available=list(self._registry.keys()))
             raise ValueError(f"Strategy class '{name}' not found.")
-        # Instantiate the strategy with its configuration
+        debug("Strategy instantiated", name=name)
         return strategy_class(config=config, **kwargs)
 
 _strategy_registry = StrategyRegistry()
@@ -91,12 +99,13 @@ def register_all_components():
     """Registers all nodes and strategies.
     This function should be called during application startup.
     """
+    tracer("register_all_components")
     
-    # Register Nodes
     default_nodes_instance = create_default_nodes()
     _node_registry.register("default_attack", lambda **k: default_nodes_instance["attack"])
     _node_registry.register("default_defense", lambda **k: default_nodes_instance["defence"])
     _node_registry.register("default_eval", lambda **k: default_nodes_instance["eval"])
+    step("Registered default nodes", nodes=["default_attack", "default_defense", "default_eval"])
     
     _node_registry.register("router", lambda **k: RouterNode(**k))
     _node_registry.register("strategy_attack", lambda **k: StrategyDrivenAttackNode(**k))
@@ -104,14 +113,15 @@ def register_all_components():
     _node_registry.register("server_eval", lambda **k: ServerEvalNode(**k))
     _node_registry.register("llm_eval", lambda **k: LLMEvalNode(**k))
     _node_registry.register("multilayer_defense", lambda **k: MultilayerDefenseNode(**k))
+    step("Registered custom nodes", nodes=["router", "strategy_attack", "ensemble_defense", "server_eval", "llm_eval", "multilayer_defense"])
 
-    # Register Strategies
     _strategy_registry.register("default", DefaultStrategy)
     _strategy_registry.register("iterative_improvement", IterativeImprovementStrategy)
-    _strategy_registry.register("manual", ManualStrategy) # Register ManualStrategy
+    _strategy_registry.register("manual", ManualStrategy)
+    step("Registered strategies", strategies=["default", "iterative_improvement", "manual"])
     
-    # Register Providers (call the registration function)
     register_all_providers()
+    checkpoint("All components registered")
 
 # It's recommended to call register_all_components() during application startup.
 # For example, in server/main.py's lifespan context:

@@ -10,6 +10,7 @@ from nodes.base import BaseAdversarialNode
 from engine.domain_models import create_eval_result
 from engine.state_schema import update_turn_data, SystemState
 from datetime import datetime
+from engine.debug_utils import debug, tracer, step, warn, err, checkpoint
 
 
 class ServerEvalNode(BaseAdversarialNode):
@@ -37,6 +38,7 @@ class ServerEvalNode(BaseAdversarialNode):
     def _get_client(self) -> httpx.AsyncClient:
         """Get or create async HTTP client"""
         if self._client is None:
+            debug("Creating new HTTP client for eval server", timeout=self.config.get("timeout", 30.0))
             self._client = httpx.AsyncClient(
                 timeout=self.config.get("timeout", 30.0),
                 follow_redirects=True
@@ -46,19 +48,14 @@ class ServerEvalNode(BaseAdversarialNode):
     async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
         """
         Evaluate attack-defence interaction using external service.
-        
-        Args:
-            state: Current system state
-            runtime_config: Runtime configuration.
-        
-        Returns:
-            Updated current_turn with evaluation result
         """
+        tracer("ServerEvalNode.execute", server=self.eval_server_url)
         current_turn = state.get("current_turn", {})
         attack = current_turn.get("attack")
         defence = current_turn.get("defence")
         
         if not attack or not defence:
+            err("Missing attack or defence payload in current_turn")
             raise ValueError("Missing attack or defence payload in current_turn")
         
         eval_request = {
@@ -78,6 +75,7 @@ class ServerEvalNode(BaseAdversarialNode):
                 "intent": state.get("payload", {}).get("intent")
             }
         }
+        debug("Sending evaluation request", url=self.eval_server_url)
         
         try:
             client = self._get_client()
@@ -88,6 +86,7 @@ class ServerEvalNode(BaseAdversarialNode):
             response.raise_for_status()
             
             eval_data = response.json()
+            step("Evaluation response received", status=response.status_code)
             
             adjusted_score = self._adjust_score(
                 eval_data.get("score", 0.0),
@@ -104,8 +103,10 @@ class ServerEvalNode(BaseAdversarialNode):
                 server_url=url,
                 response_time_ms=(response.elapsed.total_seconds() * 1000)
             )
+            step("Evaluation complete", score=adjusted_score)
             
         except httpx.TimeoutException:
+            err("Evaluation service timeout")
             eval_result = create_eval_result(
                 score=0.0,
                 success=False,
@@ -116,6 +117,7 @@ class ServerEvalNode(BaseAdversarialNode):
             )
             
         except httpx.HTTPStatusError as e:
+            err("Evaluation service HTTP error", status=e.response.status_code)
             eval_result = create_eval_result(
                 score=0.0,
                 success=False,
@@ -126,6 +128,7 @@ class ServerEvalNode(BaseAdversarialNode):
             )
             
         except Exception as e:
+            err("Evaluation failed", error=str(e))
             eval_result = create_eval_result(
                 score=0.0,
                 success=False,
@@ -144,9 +147,8 @@ class ServerEvalNode(BaseAdversarialNode):
         return {"current_turn": updated_turn}
     
     def _adjust_score(self, score: float, success: bool, was_blocked: bool) -> float:
-        """
-        Adjust score based on strictness and defence status.
-        """
+        """Adjust score based on strictness and defence status."""
+        tracer("_adjust_score", raw_score=score)
         adjusted = score
         
         strictness = self.config.get("strictness", 0.5)
@@ -166,6 +168,8 @@ class ServerEvalNode(BaseAdversarialNode):
         elif not was_blocked and not success:
             adjusted *= 0.8
         
-        return max(0.0, min(1.0, adjusted))
+        final_score = max(0.0, min(1.0, adjusted))
+        step("Score adjusted", raw=score, adjusted=final_score)
+        return final_score
 
 

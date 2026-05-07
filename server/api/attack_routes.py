@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional
 from pydantic import BaseModel
 
 from server.database.connection import get_db
+from engine.debug_utils import checkpoint, debug, err, step, tracer, warn
 
 
 router = APIRouter()
@@ -31,28 +32,35 @@ class AttackConfig(BaseModel):
 @router.get("/runs/{run_id}/attack/config")
 async def get_attack_config(run_id: str):
     """Get attack configuration for a run"""
+    tracer("Getting attack config", run_id=run_id)
     db = get_db()
     if db is None:
+        err("Database not connected")
         raise HTTPException(status_code=500, detail="Database not connected")
     
     run = await db.runs.find_one({"run_id": run_id})
     if not run:
+        warn("Run not found", run_id=run_id)
         raise HTTPException(status_code=404, detail="Run not found")
     
     attack_config = run.get("config", {}).get("attack_config", {})
+    debug("Attack config retrieved", run_id=run_id)
     return attack_config
 
 
 @router.put("/runs/{run_id}/attack/config")
 async def update_attack_config(run_id: str, config: AttackConfig):
     """Update attack configuration for a run"""
+    tracer("Updating attack config", run_id=run_id)
     db = get_db()
     if db is None:
+        err("Database not connected")
         raise HTTPException(status_code=500, detail="Database not connected")
     
     # Verify run exists
     run = await db.runs.find_one({"run_id": run_id})
     if not run:
+        warn("Run not found", run_id=run_id)
         raise HTTPException(status_code=404, detail="Run not found")
     
     # Update config
@@ -62,8 +70,10 @@ async def update_attack_config(run_id: str, config: AttackConfig):
     )
     
     if result.modified_count == 0:
+        err("Failed to update attack config", run_id=run_id)
         raise HTTPException(status_code=400, detail="Failed to update config")
     
+    step("Attack config updated", run_id=run_id)
     return config
 
 
@@ -74,8 +84,10 @@ async def update_attack_config(run_id: str, config: AttackConfig):
 @router.get("/runs/{run_id}/attack/prompts")
 async def get_attack_prompts(run_id: str):
     """Get all attack prompts for a run"""
+    tracer("Getting attack prompts", run_id=run_id)
     db = get_db()
     if db is None:
+        err("Database not connected")
         raise HTTPException(status_code=500, detail="Database not connected")
     
     from server.database.operations import get_db_ops
@@ -84,10 +96,12 @@ async def get_attack_prompts(run_id: str):
     # Verify run exists
     run = await db_ops.get_run(run_id)
     if not run:
+        warn("Run not found", run_id=run_id)
         raise HTTPException(status_code=404, detail="Run not found")
     
     # Get attacks
     attacks = await db_ops.get_attacks(run_id)
+    debug(f"Found {len(attacks)} attacks", run_id=run_id)
     
     # Format as prompts with status
     prompts = []
@@ -99,6 +113,7 @@ async def get_attack_prompts(run_id: str):
             "timestamp": attack["timestamp"]
         })
     
+    checkpoint(f"Returning {len(prompts)} prompts", run_id=run_id)
     return prompts
 
 
@@ -109,8 +124,10 @@ async def get_attack_prompts(run_id: str):
 @router.get("/runs/{run_id}/attack/stats")
 async def get_attack_stats(run_id: str):
     """Get attack statistics for a run"""
+    tracer("Getting attack stats", run_id=run_id)
     db = get_db()
     if db is None:
+        err("Database not connected")
         raise HTTPException(status_code=500, detail="Database not connected")
     
     from server.database.operations import get_db_ops
@@ -119,11 +136,13 @@ async def get_attack_stats(run_id: str):
     # Get run
     run = await db_ops.get_run(run_id)
     if not run:
+        warn("Run not found", run_id=run_id)
         raise HTTPException(status_code=404, detail="Run not found")
     
     # Get attacks and evaluations
     attacks = await db_ops.get_attacks(run_id)
     evaluations = await db_ops.get_evaluations(run_id)
+    debug(f"Found {len(attacks)} attacks, {len(evaluations)} evaluations", run_id=run_id)
     
     # Calculate stats
     total_prompts = len(attacks)
@@ -142,6 +161,7 @@ async def get_attack_stats(run_id: str):
         status = attack.get("metadata", {}).get("status", "generated")
         status_counts[status] = status_counts.get(status, 0) + 1
     
+    step("Attack stats calculated", run_id=run_id, total=total_prompts)
     return {
         "totalPrompts": total_prompts,
         "pendingAttacks": pending_attacks,

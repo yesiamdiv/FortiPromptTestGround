@@ -7,6 +7,7 @@ This node delegates routing decisions to the strategy.
 from typing import Dict, Any
 from nodes.base import BaseAdversarialNode, StrategyProxyNode
 from engine.state_schema import RoutingSignals, SystemState
+from engine.debug_utils import debug, tracer, step, warn, err
 
 
 class RouterNode(StrategyProxyNode):
@@ -32,6 +33,7 @@ class RouterNode(StrategyProxyNode):
         Returns:
             Updated state with the routing signal determined by the strategy.
         """
+        tracer("RouterNode.execute")
         try:
             strategy = self.config.get('strategy')
             if not strategy:
@@ -45,13 +47,14 @@ class RouterNode(StrategyProxyNode):
             if "routing_signal" not in routing_result or "strategy_context" not in routing_result:
                 raise ValueError("Strategy's route method must return a dictionary containing 'routing_signal' and 'strategy_context'.")
 
+            step("Routing complete", signal=routing_result.get("routing_signal"))
             return routing_result
             
         except AttributeError as e:
             raise AttributeError(f"Strategy error: {e}")
         except (TypeError, ValueError) as e:
-            print(f"Error in strategy routing method: {e}")
+            debug("Error in strategy routing method", error=str(e))
             return {"routing_signal": RoutingSignals.END, "strategy_context": {}}
         except Exception as e:
-            print(f"Unexpected error during routing: {e}")
+            debug("Unexpected error during routing", error=str(e))
             return {"routing_signal": RoutingSignals.END, "strategy_context": {}}

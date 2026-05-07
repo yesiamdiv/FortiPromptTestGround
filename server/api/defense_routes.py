@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional, List
 from pydantic import BaseModel
 
 from server.database.connection import get_db
+from engine.debug_utils import checkpoint, debug, err, step, tracer, warn
 
 
 router = APIRouter()
@@ -34,28 +35,35 @@ class DefenseConfig(BaseModel):
 @router.get("/runs/{run_id}/defense/config")
 async def get_defense_config(run_id: str):
     """Get defense configuration for a run"""
+    tracer("Getting defense config", run_id=run_id)
     db = get_db()
     if db is None:
+        err("Database not connected")
         raise HTTPException(status_code=500, detail="Database not connected")
     
     run = await db.runs.find_one({"run_id": run_id})
     if not run:
+        warn("Run not found", run_id=run_id)
         raise HTTPException(status_code=404, detail="Run not found")
     
     defense_config = run.get("config", {}).get("defence_config", {})
+    debug("Defense config retrieved", run_id=run_id)
     return defense_config
 
 
 @router.put("/runs/{run_id}/defense/config")
 async def update_defense_config(run_id: str, config: DefenseConfig):
     """Update defense configuration for a run"""
+    tracer("Updating defense config", run_id=run_id)
     db = get_db()
     if db is None:
+        err("Database not connected")
         raise HTTPException(status_code=500, detail="Database not connected")
     
     # Verify run exists
     run = await db.runs.find_one({"run_id": run_id})
     if not run:
+        warn("Run not found", run_id=run_id)
         raise HTTPException(status_code=404, detail="Run not found")
     
     # Update config
@@ -65,8 +73,10 @@ async def update_defense_config(run_id: str, config: DefenseConfig):
     )
     
     if result.modified_count == 0:
+        err("Failed to update defense config", run_id=run_id)
         raise HTTPException(status_code=400, detail="Failed to update config")
     
+    step("Defense config updated", run_id=run_id)
     return config
 
 
@@ -77,8 +87,10 @@ async def update_defense_config(run_id: str, config: DefenseConfig):
 @router.get("/runs/{run_id}/defense/responses")
 async def get_defense_responses(run_id: str):
     """Get all defense responses for a run"""
+    tracer("Getting defense responses", run_id=run_id)
     db = get_db()
     if db is None:
+        err("Database not connected")
         raise HTTPException(status_code=500, detail="Database not connected")
     
     from server.database.operations import get_db_ops
@@ -87,11 +99,13 @@ async def get_defense_responses(run_id: str):
     # Verify run exists
     run = await db_ops.get_run(run_id)
     if not run:
+        warn("Run not found", run_id=run_id)
         raise HTTPException(status_code=404, detail="Run not found")
     
     # Get defenses and evaluations
     defences = await db_ops.get_defences(run_id)
     evaluations = await db_ops.get_evaluations(run_id)
+    debug(f"Found {len(defences)} defences, {len(evaluations)} evaluations", run_id=run_id)
     
     # Create evaluation lookup
     eval_by_index = {e["index"]: e for e in evaluations}
@@ -119,6 +133,7 @@ async def get_defense_responses(run_id: str):
             "wasBlocked": defence["was_blocked"]
         })
     
+    checkpoint(f"Returning {len(responses)} responses", run_id=run_id)
     return responses
 
 
@@ -129,8 +144,10 @@ async def get_defense_responses(run_id: str):
 @router.get("/runs/{run_id}/defense/stats")
 async def get_defense_stats(run_id: str):
     """Get defense statistics for a run"""
+    tracer("Getting defense stats", run_id=run_id)
     db = get_db()
     if db is None:
+        err("Database not connected")
         raise HTTPException(status_code=500, detail="Database not connected")
     
     from server.database.operations import get_db_ops
@@ -139,13 +156,16 @@ async def get_defense_stats(run_id: str):
     # Get run
     run = await db_ops.get_run(run_id)
     if not run:
+        warn("Run not found", run_id=run_id)
         raise HTTPException(status_code=404, detail="Run not found")
     
     # Get defenses and evaluations
     defences = await db_ops.get_defences(run_id)
     evaluations = await db_ops.get_evaluations(run_id)
+    debug(f"Found {len(defences)} defences, {len(evaluations)} evaluations", run_id=run_id)
     
     if not defences:
+        debug("No defences found", run_id=run_id)
         return {
             "totalResponses": 0,
             "blockedCount": 0,
@@ -182,6 +202,7 @@ async def get_defense_stats(run_id: str):
                 }
             filter_performance[blocked_by]["blocked"] += 1
     
+    step("Defense stats calculated", run_id=run_id, total=total_responses, blocked=blocked_count)
     return {
         "totalResponses": total_responses,
         "blockedCount": blocked_count,

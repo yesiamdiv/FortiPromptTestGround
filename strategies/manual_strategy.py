@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional
 from strategies.base import AttackStrategy
 from engine.domain_models import create_simple_attack
 from engine.state_schema import create_turn_data, RoutingSignals, SystemState
+from engine.debug_utils import debug, tracer, step, warn, err
 import uuid
 
 
@@ -26,82 +27,72 @@ class ManualStrategy(AttackStrategy):
         super().__init__(default_config)
     
     def initialize(self, state: SystemState) -> Dict[str, Any]:
-        print(f"Initializing ManualStrategy for run: {state.get('run_id')}")
+        tracer("ManualStrategy.initialize", run_id=state.get('run_id'))
         
-        # Retrieve session_id from initial_state payload
         session_id = state.get("payload", {}).get("session_id")
         if not session_id:
+            err("Missing session_id for ManualStrategy")
             raise ValueError("ManualStrategy requires a 'session_id' in the initial payload for initialization.")
 
-        # Hydrate strategy_context from previous turns via initial_state if available
-        # The ManualDatabaseMiddleware should have already hydrated this.
+        debug("Initializing manual strategy", session_id=session_id)
         strategy_context = state.get("strategy_context", {})
         
-        # Ensure history is present and iteration_count is correct
         if "history" not in strategy_context:
-            strategy_context["history"] = [] # History of past attack prompts & responses
+            strategy_context["history"] = []
         if "iteration_count" not in strategy_context:
             strategy_context["iteration_count"] = 0
             
-        # Add current session_id to context for easy access
         strategy_context["session_id"] = session_id
         strategy_context["max_turns"] = self.config.get("max_turns", 100)
 
         state["strategy_context"] = strategy_context
-        state["routing_signal"] = RoutingSignals.CONTINUE # Always continue to attack initially
+        state["routing_signal"] = RoutingSignals.CONTINUE
 
+        step("ManualStrategy initialized", session_id=session_id, history_len=len(strategy_context["history"]))
         return state
 
     async def execute_generation(self, state: SystemState, config: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Generates an attack based on user input and conversation history.
-        """
+        """Generates an attack based on user input and conversation history."""
+        tracer("ManualStrategy.execute_generation")
         strategy_context = state["strategy_context"]
         current_iteration = strategy_context["iteration_count"]
         session_id = strategy_context["session_id"]
         
-        # The prompt for this turn comes directly from the user payload.
         user_prompt = state.get("payload", {}).get("prompt")
         if not user_prompt:
+            err("Missing prompt for manual generation")
             raise ValueError("ManualStrategy requires a 'prompt' in the payload for attack generation.")
 
-        # Accumulate history: Frontend might send full history, or middleware hydrates it.
-        # Assume middleware hydrates initial history, and we just append.
         conversation_history = strategy_context.get("history", [])
-        
-        # The full attack prompt for this turn includes past context + new user prompt
         full_attack_prompt = "\n".join(conversation_history + [f"User Input: {user_prompt}"])
+        debug("Built attack prompt", history_len=len(conversation_history), prompt_length=len(full_attack_prompt))
 
-        # Create AttackData
         turn_id = state.get("current_turn", {}).get("turn_id", f"turn_{uuid.uuid4().hex[:8]}")
         attack = create_simple_attack(
             full_attack_prompt,
             strategy="manual",
             iteration=current_iteration + 1,
-            user_input=user_prompt # Store original user input as metadata
+            user_input=user_prompt
         )
 
         turn_data = create_turn_data(turn_id, "attack")
         turn_data["attack"] = attack
 
-        # Update strategy_context with the new turn's data for persistence
         strategy_context["history"].append(f"Attack (Turn {current_iteration + 1}): {full_attack_prompt}")
         strategy_context["iteration_count"] += 1
         
+        step("Manual attack generated", turn_id=turn_id, iteration=strategy_context["iteration_count"])
         return {
             "current_turn": turn_data,
             "strategy_context": strategy_context,
-            "session_id": session_id # Ensure session_id is propagated for middleware
+            "session_id": session_id
         }
 
     def route(self, state: SystemState) -> Dict[str, Any]:
-        """
-        For a manual strategy, after one turn (Attack -> Defence -> Eval), we always end.
-        The system then waits for the next user input to re-start the process.
-        """
+        """Route decision for manual strategy."""
+        tracer("ManualStrategy.route")
         strategy_context = state.get("strategy_context", {})
-        
-        # Always end a single manual turn, letting the RunManager/Middleware handle the IDLE state
+        debug("Manual route: always END", iteration=strategy_context.get("iteration_count"))
         return {
             "routing_signal": RoutingSignals.END,
             "strategy_context": strategy_context

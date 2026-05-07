@@ -9,6 +9,7 @@ from providers.base import BaseLLMProvider
 from providers.ollama_provider import OllamaProvider
 from providers.gemini_provider import GeminiProvider
 # from providers.openai_provider import OpenAIProvider
+from engine.debug_utils import tracer, step, debug, warn, err
 
 
 ProviderFactory = Callable[..., Any]
@@ -21,8 +22,10 @@ class ProviderRegistry:
     def register(self, name: str, provider_class: Type[BaseLLMProvider]):
         """Register a provider class."""
         if name in self._registry:
+            warn(f"Provider '{name}' already registered, overwriting")
             raise ValueError(f"Provider '{name}' already registered.")
         self._registry[name] = provider_class
+        debug("Provider registered", name=name)
 
     def get(self, name: str, config: Dict[str, Any], **kwargs: Any) -> BaseLLMProvider:
         """
@@ -35,8 +38,9 @@ class ProviderRegistry:
         """
         provider_class = self._registry.get(name)
         if not provider_class:
+            err(f"Provider class '{name}' not found", available=list(self._registry.keys()))
             raise ValueError(f"Provider class '{name}' not found.")
-        # Instantiate the provider with its configuration
+        debug("Provider instantiated", name=name, model=config.get("model"))
         return provider_class(config=config, **kwargs)
 
 _provider_registry = ProviderRegistry()
@@ -46,8 +50,10 @@ def get_provider_registry() -> ProviderRegistry:
 
 def register_all_providers():
     """Registers all available LLM providers."""
+    tracer("register_all_providers")
     _provider_registry.register("ollama", OllamaProvider)
     _provider_registry.register("gemini", GeminiProvider)
+    step("Registered providers", providers=["ollama", "gemini"])
     # _provider_registry.register("openai", OpenAIProvider)
 
 # Call this function during application startup to register providers.

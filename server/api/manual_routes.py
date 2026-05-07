@@ -1,5 +1,6 @@
 """
-API Endpoints for Manual Run Sessions and Turns"""
+API Endpoints for Manual Run Sessions and Turns
+"""
 
 from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List, Dict, Any, Optional
@@ -13,6 +14,7 @@ from server.api.schemas import (
 from server.run_manager import get_run_manager, RunManager, RunStatus
 from server.database.connection import get_db
 from server.database.operations import get_db_ops
+from engine.debug_utils import checkpoint, debug, err, tracer, step, warn
 from server.database.models_v2 import ManualTurn, ManualSession, AttackData, DefenceData, EvaluationData # Import Pydantic models
 from engine.state_schema import SystemState, RoutingSignals # For type hinting state_checkpoint
 from server.websocket.socketio_manager import get_socketio_manager # Import for broadcasting
@@ -36,13 +38,16 @@ async def create_manual_session(
     Create a new manual interaction session within a given run.
     This is the entry point for a human-in-the-loop chat.
     """
+    tracer("Creating manual session", run_id=run_id)
     try:
         run = await db_ops.get_run(run_id)
         if not run:
+            warn("Run not found", run_id=run_id)
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run with ID {run_id} not found.")
         
         # Ensure the run is configured for manual sessions
         if run.graph_config.graph_type != "manual":
+            err("Run not configured for manual sessions", run_id=run_id)
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Run is not configured for manual sessions.")
         
         session_id = await db_ops.create_manual_session(
@@ -50,11 +55,13 @@ async def create_manual_session(
             name=request.name,
             description=request.description
         )
+        step("Manual session created", session_id=session_id)
         
         # If initial_payload is provided, process it as the first turn's input
         if request.initial_payload:
             run_manager = get_run_manager()
             # This initiates the first turn of the manual graph execution
+            tracer("Initiating first manual turn", session_id=session_id)
             await run_manager.start_run(
                 run_id=run_id,
                 input_payload={**request.initial_payload, "session_id": session_id}
@@ -62,11 +69,14 @@ async def create_manual_session(
             
         session = await db_ops.get_manual_session(session_id)
         if not session:
+            err("Failed to retrieve created session", session_id=session_id)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve created session.")
+        checkpoint("Manual session response ready", session_id=session_id)
         return ManualSessionResponse(**session.dict())
     except HTTPException as e:
         raise e
     except Exception as e:
+        err(f"Failed to create manual session: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create manual session: {str(e)}")
 
 @router.post("/runs/{run_id}/sessions/{session_id}/manual_turn", response_model=RunResponse)
@@ -81,9 +91,11 @@ async def submit_manual_turn(
     Submit user input (e.g., an attack prompt) for a manual turn within a session.
     This resumes the manual run's execution for one cycle.
     """
+    tracer("Submitting manual turn", run_id=run_id, session_id=session_id)
     try:
         session = await db_ops.get_manual_session(session_id)
         if not session or session.run_id != run_id:
+            warn("Manual session not found", session_id=session_id, run_id=run_id)
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Manual session {session_id} not found for run {run_id}.")
         
         # Prepare payload for the RunExecutor
@@ -92,13 +104,16 @@ async def submit_manual_turn(
             "prompt": request.prompt,
             "runtime_config": request.runtime_config
         }
+        debug("Prepared manual turn payload", prompt_length=len(request.prompt))
         
         # Resume the run with the new manual input
         run_response = await run_manager.start_run(run_id, input_payload=payload)
+        step("Manual turn submitted", run_id=run_id)
         return RunResponse(**run_response)
     except HTTPException as e:
         raise e
     except Exception as e:
+        err(f"Failed to submit manual turn: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to submit manual turn: {str(e)}")
 
 @router.get("/runs/{run_id}/sessions/{session_id}", response_model=ManualSessionResponse)
@@ -110,14 +125,18 @@ async def get_manual_session_details(
     """
     Retrieve details of a specific manual session.
     """
+    debug("Getting manual session details", run_id=run_id, session_id=session_id)
     try:
         session = await db_ops.get_manual_session(session_id)
         if not session or session.run_id != run_id:
+            warn("Manual session not found", session_id=session_id, run_id=run_id)
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Manual session {session_id} not found for run {run_id}.")
+        checkpoint("Manual session details retrieved", session_id=session_id)
         return ManualSessionResponse(**session.dict())
     except HTTPException as e:
         raise e
     except Exception as e:
+        err(f"Failed to get manual session details: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get manual session details: {str(e)}")
 
 @router.get("/runs/{run_id}/sessions/{session_id}/history", response_model=ManualTurnHistoryResponse)
@@ -129,12 +148,15 @@ async def get_manual_turn_history(
     """
     Retrieve the complete history of turns for a manual session, including detailed attack/defence/evaluation data.
     """
+    tracer("Getting manual turn history", run_id=run_id, session_id=session_id)
     try:
         session = await db_ops.get_manual_session(session_id)
         if not session or session.run_id != run_id:
+            warn("Manual session not found", session_id=session_id, run_id=run_id)
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Manual session {session_id} not found for run {run_id}.")
         
         turns = await db_ops.get_manual_turns_for_session(session_id)
+        debug(f"Found {len(turns)} turns", session_id=session_id)
         
         detailed_turns = []
         for turn in turns:
@@ -157,10 +179,12 @@ async def get_manual_turn_history(
                 defence_data=defence_data,
                 evaluation_data=evaluation_data
             ))
-
+        
+        checkpoint("Manual turn history built", session_id=session_id, turn_count=len(detailed_turns))
         return ManualTurnHistoryResponse(session=session, turns=detailed_turns)
     except HTTPException as e:
         raise e
     except Exception as e:
+        err(f"Failed to get manual turn history: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get manual turn history: {str(e)}")
 
