@@ -43,7 +43,9 @@ class EnsembleDefenceNode(BaseAdversarialNode):
                 if not callable(model):
                     raise ValueError(f"Layer {i}, model {j} is not callable")
     
-    async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
+        if runtime_config is None:
+            runtime_config = {}
         tracer("EnsembleDefenceNode.execute", layers=len(self.layers), voting=self.voting_strategy)
         current_turn = state.get("current_turn", {})
         attack = current_turn.get("attack")
@@ -218,6 +220,36 @@ class EnsembleDefenceNode(BaseAdversarialNode):
         text_lower = text.lower()
         return any(flag in text_lower for flag in red_flags)
 
+    @classmethod
+    def get_node_schema(cls) -> Dict[str, Any]:
+        """Return JSON schema for node parameters"""
+        return {
+            "type": "object",
+            "properties": {
+                "layers": {
+                    "type": "array",
+                    "description": "Nested list of model layers",
+                    "default": [[cls._default_model]]
+                },
+                "voting_strategy": {
+                    "type": "string",
+                    "enum": ["any", "majority", "unanimous", "weighted"],
+                    "description": "Strategy for combining votes",
+                    "default": "any"
+                },
+                "early_stop": {
+                    "type": "boolean",
+                    "description": "Stop evaluation after first blocking layer",
+                    "default": False
+                },
+                "model_weights": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "description": "Weights for weighted voting strategy"
+                }
+            }
+        }
+
 
 def create_ensemble_defence(model_functions: List[Callable] = None) -> EnsembleDefenceNode:
     """
@@ -230,6 +262,6 @@ def create_ensemble_defence(model_functions: List[Callable] = None) -> EnsembleD
     
     return EnsembleDefenceNode(
         layers=layers,
-        voting_strategy="any",  # Block if any model triggers
+        voting_strategy="any",
         config={"early_stop": False}
     )

@@ -15,7 +15,9 @@ class DefaultInitNode(StrategyProxyNode):
     def get_strategy_method(self) -> str:
         return "initialize"
     
-    async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
+        if runtime_config is None:
+            runtime_config = {}
         tracer("DefaultInitNode.execute")
         strategy = self.config.get('strategy')
         if not strategy:
@@ -40,6 +42,15 @@ class DefaultInitNode(StrategyProxyNode):
 
         step("Strategy initialization complete", strategy_name=updated_state.get('strategy_context', {}).get('strategy_name'))
         return updated_state
+    
+    @classmethod
+    def get_node_schema(cls) -> Dict[str, Any]:
+        """Return JSON schema for node parameters"""
+        return {
+            "type": "object",
+            "properties": {},
+            "description": "Init node delegates to strategy.initialize(), no node-specific params"
+        }
 
 
 class DefaultAttackNode(StrategyProxyNode):
@@ -47,7 +58,9 @@ class DefaultAttackNode(StrategyProxyNode):
     def get_strategy_method(self) -> str:
         return "execute_generation"
 
-    async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
+        if runtime_config is None:
+            runtime_config = {}
         tracer("DefaultAttackNode.execute")
         strategy = self.config.get('strategy')
         if not strategy:
@@ -55,6 +68,15 @@ class DefaultAttackNode(StrategyProxyNode):
             raise AttributeError("Strategy instance not found in node's self.config.")
             
         return await strategy.execute_generation(state, runtime_config)
+    
+    @classmethod
+    def get_node_schema(cls) -> Dict[str, Any]:
+        """Return JSON schema for node parameters"""
+        return {
+            "type": "object",
+            "properties": {},
+            "description": "Attack node delegates to strategy.execute_generation(), no node-specific params"
+        }
 
 
 class DefaultDefenceNode(BaseAdversarialNode):
@@ -66,7 +88,9 @@ class DefaultDefenceNode(BaseAdversarialNode):
             default_config.update(config)
         super().__init__(default_config)
     
-    async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
+        if runtime_config is None:
+            runtime_config = {}
         tracer("DefaultDefenceNode.execute", block_rate=self.config.get("block_rate", 0.3))
         current_turn = state.get("current_turn", {})
         is_blocked = random.random() < self.config.get("block_rate", 0.3)
@@ -99,6 +123,28 @@ class DefaultDefenceNode(BaseAdversarialNode):
         updated_turn = update_turn_data(current_turn, defence=defence, node_name="defence")
         step("Default defence complete", blocked=is_blocked)
         return {"current_turn": updated_turn}
+    
+    @classmethod
+    def get_node_schema(cls) -> Dict[str, Any]:
+        """Return JSON schema for node parameters"""
+        return {
+            "type": "object",
+            "properties": {
+                "block_rate": {
+                    "type": "number",
+                    "description": "Probability of blocking a request (0-1)",
+                    "default": 0.3,
+                    "minimum": 0,
+                    "maximum": 1
+                },
+                "latency_ms": {
+                    "type": "integer",
+                    "description": "Simulated latency in milliseconds",
+                    "default": 100,
+                    "minimum": 0
+                }
+            }
+        }
 
 
 class DefaultEvalNode(BaseAdversarialNode):
@@ -110,7 +156,9 @@ class DefaultEvalNode(BaseAdversarialNode):
             default_config.update(config)
         super().__init__(default_config)
     
-    async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
+        if runtime_config is None:
+            runtime_config = {}
         tracer("DefaultEvalNode.execute", success_rate=self.config.get("success_rate", 0.4))
         current_turn = state.get("current_turn", {})
         defence = current_turn.get("defence")
@@ -134,6 +182,29 @@ class DefaultEvalNode(BaseAdversarialNode):
         updated_turn = update_turn_data(current_turn, evaluation=eval_result, node_name="eval")
         step("Default eval complete", success=is_success, score=round(score, 2))
         return {"current_turn": updated_turn}
+    
+    @classmethod
+    def get_node_schema(cls) -> Dict[str, Any]:
+        """Return JSON schema for node parameters"""
+        return {
+            "type": "object",
+            "properties": {
+                "success_rate": {
+                    "type": "number",
+                    "description": "Base probability of attack success (0-1)",
+                    "default": 0.4,
+                    "minimum": 0,
+                    "maximum": 1
+                },
+                "strictness": {
+                    "type": "number",
+                    "description": "Evaluation strictness level (0-1)",
+                    "default": 0.5,
+                    "minimum": 0,
+                    "maximum": 1
+                }
+            }
+        }
 
 
 class RouterNode(StrategyProxyNode):
@@ -141,7 +212,9 @@ class RouterNode(StrategyProxyNode):
     def get_strategy_method(self) -> str:
         return "route"
 
-    async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
+        if runtime_config is None:
+            runtime_config = {}
         tracer("DefaultRouterNode.execute")
         try:
             strategy = self.config.get('strategy')
@@ -167,6 +240,15 @@ class RouterNode(StrategyProxyNode):
         except Exception as e:
             err("Unexpected routing error", error=str(e))
             return {"routing_signal": RoutingSignals.END}
+
+    @classmethod
+    def get_node_schema(cls) -> Dict[str, Any]:
+        """Return JSON schema for node parameters"""
+        return {
+            "type": "object",
+            "properties": {},
+            "description": "Router node delegates to strategy, no node-specific params"
+        }
 
 
 def create_default_nodes(config: Dict[str, Any] = None) -> Dict[str, BaseAdversarialNode]:

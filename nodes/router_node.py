@@ -22,18 +22,20 @@ class RouterNode(StrategyProxyNode):
     def get_strategy_method(self) -> str:
         return "route"
 
-    async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
+async def execute(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
+        if runtime_config is None:
+            runtime_config = {}
+        tracer("RouterNode.execute")
         """
         Execute the router node by delegating to the strategy's route method.
         
         Args:
             state: Current system state (SystemState TypedDict).
-            runtime_config: Runtime configuration.
+            runtime_config: Runtime configuration (optional).
         
         Returns:
             Updated state with the routing signal determined by the strategy.
         """
-        tracer("RouterNode.execute")
         try:
             strategy = self.config.get('strategy')
             if not strategy:

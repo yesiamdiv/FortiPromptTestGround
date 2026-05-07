@@ -45,10 +45,12 @@ class ServerEvalNode(BaseAdversarialNode):
             )
         return self._client
     
-    async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Evaluate attack-defence interaction using external service.
         """
+        if runtime_config is None:
+            runtime_config = {}
         tracer("ServerEvalNode.execute", server=self.eval_server_url)
         current_turn = state.get("current_turn", {})
         attack = current_turn.get("attack")
@@ -171,5 +173,37 @@ class ServerEvalNode(BaseAdversarialNode):
         final_score = max(0.0, min(1.0, adjusted))
         step("Score adjusted", raw=score, adjusted=final_score)
         return final_score
+
+    @classmethod
+    def get_node_schema(cls) -> Dict[str, Any]:
+        """Return JSON schema for node parameters"""
+        return {
+            "type": "object",
+            "properties": {
+                "eval_server_url": {
+                    "type": "string",
+                    "description": "URL of the external evaluation service"
+                },
+                "api_key": {
+                    "type": "string",
+                    "description": "API key for authentication (optional)"
+                },
+                "endpoint": {
+                    "type": "string",
+                    "description": "API endpoint path",
+                    "default": "/evaluate"
+                },
+                "timeout": {
+                    "type": "number",
+                    "description": "Request timeout in seconds",
+                    "default": 30.0
+                },
+                "strictness": {
+                    "type": "number",
+                    "description": "Evaluation strictness level (0-1)",
+                    "default": 0.5
+                }
+            }
+        }
 
 
