@@ -10,6 +10,7 @@ from nodes.base import BaseAdversarialNode
 from engine.domain_models import create_defence_response
 from engine.state_schema import update_turn_data, SystemState
 from datetime import datetime
+from engine.debug_utils import debug, tracer, step, warn, err, checkpoint
 
 
 class EnsembleDefenceNode(BaseAdversarialNode):
@@ -43,25 +44,17 @@ class EnsembleDefenceNode(BaseAdversarialNode):
                     raise ValueError(f"Layer {i}, model {j} is not callable")
     
     async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Execute ensemble defence.
-        
-        Args:
-            state: Current system state
-            runtime_config: Runtime configuration.
-        
-        Returns:
-            Updated current_turn with defence payload
-        """
+        tracer("EnsembleDefenceNode.execute", layers=len(self.layers), voting=self.voting_strategy)
         current_turn = state.get("current_turn", {})
         attack = current_turn.get("attack")
         
         if not attack:
+            err("No attack payload found in current_turn")
             raise ValueError("No attack payload found in current_turn")
         
         attack_text = attack.to_string()
+        debug("Processing attack through ensemble", text_length=len(attack_text))
         
-        # Track timing
         start_time = datetime.utcnow()
         
         all_votes = []
@@ -90,10 +83,14 @@ class EnsembleDefenceNode(BaseAdversarialNode):
                 "total_models": len(layer_votes)
             })
             
+            debug("Layer evaluated", layer=layer_idx, malicious=sum(layer_votes), total=len(layer_votes), decision=layer_decision)
+            
             if layer_decision and self.config.get("early_stop", False):
+                warn("Early stop triggered", layer=layer_idx)
                 break
         
         should_block = self._apply_voting_strategy(all_votes)
+        debug("Voting complete", should_block=should_block, total_votes=len(all_votes))
         
         end_time = datetime.utcnow()
         latency_ms = (end_time - start_time).total_seconds() * 1000
@@ -124,6 +121,7 @@ class EnsembleDefenceNode(BaseAdversarialNode):
             node_name="defence"
         )
         
+        step("Ensemble defence complete", blocked=should_block, latency_ms=latency_ms)
         return {"current_turn": updated_turn}
     
     async def _call_model(
@@ -132,9 +130,7 @@ class EnsembleDefenceNode(BaseAdversarialNode):
         attack_text: str,
         model_id: str
     ) -> bool:
-        """
-        Call a model function.
-        """
+        """Call a model function."""
         try:
             import asyncio
             import inspect
@@ -147,38 +143,43 @@ class EnsembleDefenceNode(BaseAdversarialNode):
             return bool(result)
             
         except Exception as e:
-            print(f"⚠️  Model {model_id} error: {e}")
+            warn(f"Model {model_id} error", error=str(e))
             return True
     
     def _apply_voting_strategy(self, votes: List[bool]) -> bool:
-        """
-        Apply voting strategy to determine final decision.
-        """
+        """Apply voting strategy to determine final decision."""
+        tracer("_apply_voting_strategy", strategy=self.voting_strategy, vote_count=len(votes))
         if not votes:
-            return True  # Block if no votes (safety)
+            debug("No votes, defaulting to block for safety")
+            return True
         
         malicious_count = sum(votes)
         total_count = len(votes)
         
         if self.voting_strategy == "any":
-            return malicious_count > 0
+            result = malicious_count > 0
         elif self.voting_strategy == "majority":
-            return malicious_count > (total_count / 2)
+            result = malicious_count > (total_count / 2)
         elif self.voting_strategy == "unanimous":
-            return malicious_count == total_count
+            result = malicious_count == total_count
         elif self.voting_strategy == "weighted":
             weights = self.config.get("model_weights", [1.0] * total_count)
             
             if len(weights) != total_count:
+                warn("Weight count mismatch, falling back to majority")
                 return malicious_count > (total_count / 2)
             
             weighted_sum = sum(w for w, v in zip(weights, votes) if v)
             total_weight = sum(weights)
             
             threshold = self.config.get("weighted_threshold", 0.5)
-            return (weighted_sum / total_weight) > threshold
+            result = (weighted_sum / total_weight) > threshold
         else:
-            return malicious_count > (total_count / 2)
+            warn(f"Unknown voting strategy: {self.voting_strategy}, defaulting to majority")
+            result = malicious_count > (total_count / 2)
+        
+        debug("Voting result", malicious=malicious_count, total=total_count, should_block=result)
+        return result
     
     def _generate_block_response(self, layer_results: List[Dict]) -> str:
         """Generate response message when blocking"""

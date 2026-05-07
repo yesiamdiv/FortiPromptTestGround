@@ -2,6 +2,7 @@
 
 from typing import TypedDict, Optional, Dict, Any
 from datetime import datetime
+from engine.debug_utils import debug
 
 
 class TurnData(TypedDict, total=False):
@@ -34,6 +35,7 @@ class RoutingSignals:
 
 def create_initial_state(run_id: str, payload: Dict[str, Any], config: Dict[str, Any]) -> SystemState:
     """Create a fresh SystemState for a new execution run"""
+    debug("Creating initial state", run_id=run_id, payload_keys=list(payload.keys()))
     return SystemState(
         run_id=run_id,
         payload=payload,

@@ -1,5 +1,6 @@
 """
-API Endpoints for Run Management and Discovery"""
+API Endpoints for Run Management and Discovery
+"""
 
 from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List, Dict, Any, Optional
@@ -13,6 +14,7 @@ from server.api.schemas import (
 from server.run_manager import get_run_manager, RunManager, RunStatus
 from server.database.connection import get_db
 from server.database.operations import DatabaseOperations, get_db_ops
+from engine.debug_utils import checkpoint, debug, err, tracer, step, warn
 from engine.registry import get_strategy_registry, get_node_registry
 from engine.provider_registry import get_provider_registry # Import provider registry
 from server.config.models import GraphConfig, AttackNodeConfig, DefenseNodeConfig, EvaluationNodeConfig # For GraphConfig validation
@@ -38,6 +40,7 @@ async def create_new_run(
     
     This initializes a run record in the database but does not start execution.
     """
+    tracer("Creating new run", name=request.name)
     run_id = f"run_{uuid.uuid4().hex[:12]}"
     try:
         run_data = {
@@ -56,9 +59,11 @@ async def create_new_run(
         }
         
         await db_ops.create_run(run_data)
+        step("Run created", run_id=run_id)
         
         return RunResponse(run_id=run_id, status=RunStatus.IDLE.value, message="Run created successfully.")
     except Exception as e:
+        err(f"Failed to create run: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create run: {str(e)}")
 
 @router.patch("/runs/{run_id}", response_model=RunDetailsResponse)
@@ -71,6 +76,7 @@ async def update_run_config(
     Update configuration for an existing run (e.g., strategy parameters).
     This allows dynamic adjustment of run settings before or during idle states.
     """
+    debug("Updating run config", run_id=run_id)
     try:
         run = await db_ops.get_run(run_id)
         if not run:
@@ -89,6 +95,7 @@ async def update_run_config(
             updated_run = await db_ops.get_run(run_id) # Fetch updated run
             if not updated_run:
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve updated run.")
+            step("Run config updated", run_id=run_id)
             return RunDetailsResponse(**updated_run.dict())
         else:
             return RunDetailsResponse(**run.dict()) # No updates provided, return original run
@@ -106,12 +113,15 @@ async def delet_run(
     """
     Delete a run from the database but not its releted data (for now)
     """
+    tracer("Deleting run", run_id=run_id)
     try:
         if await db_ops.delete_run(run_id):
+            step("Run deleted", run_id=run_id)
             return {"message":f"{run_id} is deleted"}
         else: 
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to delete run: {str(e)}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to delete run")
     except Exception as e:
+        err(f"Failed to delete run: {e}")
         raise e
 
 @router.post("/runs/{run_id}/start", response_model=RunResponse)
@@ -125,14 +135,19 @@ async def start_existing_run(
     Start an existing adversarial run. For automatic runs, this begins the loop.
     For manual runs, this initiates the first turn or resumes from a waiting state.
     """
+    tracer("start_existing_run", run_id=run_id)
     try:
         run_response = await run_manager.start_run(run_id, input_payload=payload)
+        step("Run started", run_id=run_id, status=run_response.get("status") if isinstance(run_response, dict) else run_response.status)
         return RunResponse(**run_response)
     except ValueError as e:
+        err("Run not found for start", run_id=run_id, error=str(e))
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except RuntimeError as e:
+        err("Invalid run state for start", run_id=run_id, error=str(e))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
+        err("Failed to start run", run_id=run_id, error=str(e))
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to start run: {str(e)}")
 
 @router.post("/runs/{run_id}/stop", response_model=RunResponse)
@@ -143,12 +158,16 @@ async def stop_running_run(
     """
     Stop a currently running adversarial run.
     """
+    tracer("stop_running_run", run_id=run_id)
     try:
         response = await run_manager.stop_run(run_id)
+        step("Run stopped", run_id=run_id)
         return RunResponse(**response)
     except ValueError as e:
+        err("Run not found for stop", run_id=run_id, error=str(e))
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
+        err("Failed to stop run", run_id=run_id, error=str(e))
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to stop run: {str(e)}")
 
 @router.get("/runs", response_model=ListRunsResponse)
@@ -156,10 +175,13 @@ async def list_all_runs(db_ops: Any = Depends(_get_db_ops_dependency)):
     """
     Retrieve a list of all adversarial runs.
     """
+    tracer("list_all_runs")
     try:
         runs = await db_ops.list_runs()
+        step("Runs listed", count=len(runs))
         return ListRunsResponse(runs=runs)
     except Exception as e:
+        err("Failed to list runs", error=str(e))
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list runs: {str(e)}")
 
 @router.get("/runs/{run_id}", response_model=RunDetailsResponse)
@@ -170,14 +192,18 @@ async def get_run_details(
     """
     Retrieve detailed information about a specific adversarial run.
     """
+    debug("Getting run details", run_id=run_id)
     try:
         run = await db_ops.get_run(run_id)
         if not run:
+            warn(f"Run not found", run_id=run_id)
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run with ID {run_id} not found.")
+        checkpoint("Run details retrieved", run_id=run_id)
         return RunDetailsResponse(**run.dict())
     except HTTPException as e:
         raise e
     except Exception as e:
+        err(f"Failed to get run details: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get run details: {str(e)}")
 
 @router.get("/strategies", response_model=ListStrategiesResponse)
@@ -186,6 +212,7 @@ async def list_available_strategies():
     List all available attack strategies and their configuration schemas.
     This allows the frontend to dynamically build forms for strategy configuration.
     """
+    tracer("Listing available strategies")
     strategy_registry = get_strategy_registry()
     strategies_info = []
     for name, strategy_class in strategy_registry._registry.items():
@@ -197,11 +224,12 @@ async def list_available_strategies():
                 schema_definition=schema
             ))
         except Exception as e:
-            print(f"Warning: Could not get schema for strategy {name}: {e}")
+            warn(f"Could not get schema for strategy", strategy=name)
             strategies_info.append(StrategySchemaResponse(
                 strategy_name=name,
                 schema_definition={"error": f"Could not load schema: {str(e)}"}
             ))
+    step(f"Found {len(strategies_info)} strategies")
     return ListStrategiesResponse(strategies=strategies_info)
 
 @router.get("/providers", response_model=ListProvidersResponse)
@@ -209,10 +237,12 @@ async def list_available_providers():
     """
     List all available LLM providers.
     """
+    tracer("Listing available providers")
     provider_registry = get_provider_registry()
     providers_info = []
     for name, _ in provider_registry._registry.items(): # Iterate over registered provider names
         providers_info.append(ProviderInfoResponse(name=name))
+    step(f"Found {len(providers_info)} providers")
     return ListProvidersResponse(providers=providers_info)
 
 # Node Discovery Endpoints
@@ -222,6 +252,7 @@ def _get_node_schema(node_type: str, node_name: str, node_class: Any) -> Dict[st
     # Implement logic to get schema for a given node class
     # This might involve a class method on the node or a lookup table
     # For now, return a placeholder
+    debug("Getting node schema", node_type=node_type, node_name=node_name)
     if hasattr(node_class, 'get_node_schema'): # Assuming nodes might have a schema method
         return node_class.get_node_schema() 
     return {"type": "object", "properties": {}, "description": f"Schema for {node_name} node of type {node_type}"}
@@ -231,6 +262,7 @@ async def list_attack_nodes():
     """
     List available attack node types and their configuration schemas.
     """
+    tracer("Listing attack nodes")
     node_registry = get_node_registry()
     nodes_info = []
     # This part assumes a way to filter nodes by type (e.g., attack, defense, eval)
@@ -255,12 +287,13 @@ async def list_attack_nodes():
                     schema_definition=schema
                 ))
             except Exception as e:
-                print(f"Warning: Could not get schema for attack node {name}: {e}")
+                warn(f"Could not get schema for attack node", node=name)
                 nodes_info.append(NodeSchemaResponse(
                     node_type="attack",
                     node_name=name,
                     schema_definition={"error": f"Could not load schema: {str(e)}"}
                 ))
+    step(f"Found {len(nodes_info)} attack nodes")
     return ListNodeSchemasResponse(nodes=nodes_info)
 
 @router.get("/nodes/defense", response_model=ListNodeSchemasResponse)
@@ -268,6 +301,7 @@ async def list_defense_nodes():
     """
     List available defense node types and their configuration schemas.
     """
+    tracer("Listing defense nodes")
     node_registry = get_node_registry()
     nodes_info = []
     for name, factory in node_registry._registry.items():
@@ -283,7 +317,7 @@ async def list_defense_nodes():
                     schema_definition=schema
                 ))
             except Exception as e:
-                print(f"Warning: Could not get schema for defense node {name}: {e}")
+                warn(f"Could not get schema for defense node", node=name)
                 nodes_info.append(NodeSchemaResponse(
                     node_type="defense",
                     node_name=name,
@@ -296,6 +330,7 @@ async def list_evaluation_nodes():
     """
     List available evaluation node types and their configuration schemas.
     """
+    tracer("Listing evaluation nodes")
     node_registry = get_node_registry()
     nodes_info = []
     for name, factory in node_registry._registry.items():
@@ -311,10 +346,11 @@ async def list_evaluation_nodes():
                     schema_definition=schema
                 ))
             except Exception as e:
-                print(f"Warning: Could not get schema for evaluation node {name}: {e}")
+                warn(f"Could not get schema for evaluation node", node=name)
                 nodes_info.append(NodeSchemaResponse(
                     node_type="evaluation",
                     node_name=name,
                     schema_definition={"error": f"Could not load schema: {str(e)}"}
                 ))
+    step(f"Found {len(nodes_info)} evaluation nodes")
     return ListNodeSchemasResponse(nodes=nodes_info)

@@ -8,6 +8,7 @@ patterns, data processing, and custom workflows.
 
 from typing import Dict, Any
 from nodes.base import BaseAdversarialNode, StrategyProxyNode
+from engine.debug_utils import debug, tracer, step, warn, err
 
 
 class StrategyDrivenAttackNode(StrategyProxyNode):
@@ -33,26 +34,14 @@ class StrategyDrivenAttackNode(StrategyProxyNode):
         super().__init__(config)
     
     async def execute(self, state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Execute attack generation by delegating to strategy.
-        
-        The strategy has full control and can:
-        - Call LLMs multiple times
-        - Process responses
-        - Store complex data structures in strategy_context
-        - Return the final attack payload
-        
-        Args:
-            state: Current system state
-            config: Runtime configuration containing strategy
-        
-        Returns:
-            Updated state with new attack payload
-        """
+        tracer("StrategyDrivenAttackNode.execute")
         strategy = self.config.get('strategy')
         
         if not strategy:
+            err("Strategy instance not found in Attack Node config")
             raise AttributeError("Strategy instance not found in Attack Node's config.")
             
+        debug("Delegating to strategy execute_generation", strategy_type=type(strategy).__name__)
         result = await strategy.execute_generation(state, config)
+        step("Attack generation complete", result_keys=list(result.keys()))
         return result

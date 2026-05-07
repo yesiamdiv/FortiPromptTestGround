@@ -1,9 +1,11 @@
 """
-Logging Middleware"""
+Logging Middleware
+"""
 
 from typing import Dict, Any
 from datetime import datetime
 from middlewares.base import BaseMiddleware
+from engine.debug_utils import debug, tracer, step, warn, err
 
 
 class LoggingMiddleware(BaseMiddleware):
@@ -17,15 +19,15 @@ class LoggingMiddleware(BaseMiddleware):
         self.run_timings: Dict[str, float] = {}
     
     async def before_run(self, initial_state: Dict[str, Any], config: Dict[str, Any], run_id: str):
+        tracer("LoggingMiddleware.before_run", run_id=run_id)
         self.run_timings[run_id] = datetime.utcnow().timestamp()
         
-        # CORRECT WAY to read the strategy name from the embedded GraphConfig in initial_state
         strategy_config = initial_state.get("config", {}).get("strategy_config", {})
         strategy_name = strategy_config.get("strategy_name", "unknown_strategy")
         intent = initial_state.get("payload", {}).get("intent", "unknown")
         
         self._log(f"\n{'='*60}")
-        self._log(f"🚀 RUN STARTED: {run_id}")
+        self._log(f"RUN STARTED: {run_id}")
         self._log(f"   Strategy: {strategy_name}")
         self._log(f"   Intent: {intent}")
         self._log(f"{'='*60}\n")
@@ -37,7 +39,7 @@ class LoggingMiddleware(BaseMiddleware):
         node_name = list(step_data.keys())[0]
         node_output = step_data[node_name]
         
-        self._log(f"📍 NODE: {node_name}")
+        self._log(f"NODE: {node_name}")
         
         if "current_turn" in node_output:
             turn = node_output["current_turn"]
@@ -45,21 +47,21 @@ class LoggingMiddleware(BaseMiddleware):
             if turn.get("attack"):
                 attack = turn["attack"]
                 preview = getattr(attack, 'to_string', lambda: 'N/A')()[:100]
-                self._log(f"   ⚔️  Attack: {preview}...")
+                self._log(f"   Attack: {preview}...")
             
             if turn.get("defence"):
                 defence = turn["defence"]
-                blocked = "🚫 BLOCKED" if getattr(defence, 'was_blocked', lambda: False)() else "✅ ALLOWED"
-                self._log(f"   🛡️  Defence: {blocked}")
+                blocked = "BLOCKED" if getattr(defence, 'was_blocked', lambda: False)() else "ALLOWED"
+                self._log(f"   Defence: {blocked}")
             
             if turn.get("evaluation"):
                 eval_result = turn["evaluation"]
                 summary = getattr(eval_result, 'to_summary', lambda: 'N/A')()
-                self._log(f"   📊 Eval: {summary}")
+                self._log(f"   Eval: {summary}")
         
         if "routing_signal" in node_output:
             signal = node_output["routing_signal"]
-            self._log(f"   🔀 Routing: {signal}")
+            self._log(f"   Routing: {signal}")
         
         self._log("")
     
@@ -71,7 +73,7 @@ class LoggingMiddleware(BaseMiddleware):
             elapsed = 0
         
         self._log(f"\n{'='*60}")
-        self._log(f"🏁 RUN COMPLETED: {run_id}")
+        self._log(f"RUN COMPLETED: {run_id}")
         self._log(f"   Duration: {elapsed:.2f}s")
         
         if final_state.get("current_turn", {}).get("evaluation"):
@@ -82,7 +84,8 @@ class LoggingMiddleware(BaseMiddleware):
         self._log(f"{'='*60}\n")
     
     async def on_error(self, error, run_id, step_data=None):
-        self._log(f"\n❌ ERROR in {run_id}: {type(error).__name__}")
+        err("Middleware caught error", run_id=run_id, error_type=type(error).__name__, message=str(error))
+        self._log(f"\nERROR in {run_id}: {type(error).__name__}")
         self._log(f"   Message: {str(error)}\n")
     
     def _log(self, message: str):

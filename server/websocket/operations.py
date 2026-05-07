@@ -7,6 +7,7 @@ This module contains the actual WebSocket logic that middlewares call.
 
 from typing import Dict, Any
 from server.websocket.socketio_manager import SocketIOManager
+from engine.debug_utils import debug, err, tracer, step
 
 
 class WebSocketOperations:
@@ -24,6 +25,7 @@ class WebSocketOperations:
         Args:
             socketio_manager: Socket.IO manager instance
         """
+        tracer("WebSocketOperations initialized")
         self.sio_manager = socketio_manager
     
     # --- Automatic Run Events ---
@@ -32,6 +34,7 @@ class WebSocketOperations:
         """
         Broadcast run started event for automatic runs.
         """
+        tracer("Broadcasting run_started", run_id=run_id)
         await self.sio_manager.broadcast_to_room(
             run_id,
             'run_started',
@@ -41,6 +44,7 @@ class WebSocketOperations:
                 **data
             }
         )
+        step("Broadcasted run_started", run_id=run_id)
     
     async def broadcast_attack_generated(
         self,
@@ -52,6 +56,7 @@ class WebSocketOperations:
         """
         Broadcast attack generation event for automatic runs.
         """
+        debug("Broadcasting attack_generated", run_id=run_id, index=index)
         await self.sio_manager.broadcast_to_room(
             run_id,
             'attack_generated',
@@ -74,6 +79,7 @@ class WebSocketOperations:
         """
         Broadcast defence response event for automatic runs.
         """
+        debug("Broadcasting defence_response", run_id=run_id, index=index)
         await self.sio_manager.broadcast_to_room(
             run_id,
             'defence_response',
@@ -96,6 +102,7 @@ class WebSocketOperations:
         """
         Broadcast evaluation completion event for automatic runs.
         """
+        debug("Broadcasting evaluation_complete", run_id=run_id, index=index)
         await self.sio_manager.broadcast_to_room(
             run_id,
             'evaluation_complete',
@@ -117,6 +124,7 @@ class WebSocketOperations:
         """
         Broadcast turn completion event for automatic runs.
         """
+        debug("Broadcasting turn_completed", run_id=run_id, index=index)
         await self.sio_manager.broadcast_to_room(
             run_id,
             'turn_completed',
@@ -138,6 +146,7 @@ class WebSocketOperations:
         """
         Broadcast general run progress for automatic runs.
         """
+        debug("Broadcasting run_progress", run_id=run_id, current=current, total=total)
         await self.sio_manager.broadcast_to_room(
             run_id,
             'run_progress',
@@ -159,6 +168,7 @@ class WebSocketOperations:
         """
         Broadcast run completion event (for automatic runs).
         """
+        step("Broadcasting run_completed", run_id=run_id)
         await self.sio_manager.broadcast_to_room(
             run_id,
             'run_completed',
@@ -178,6 +188,7 @@ class WebSocketOperations:
         """
         Broadcast run error event.
         """
+        err("Broadcasting run_error", run_id=run_id, error=error)
         await self.sio_manager.broadcast_to_room(
             run_id,
             'run_error',
@@ -202,6 +213,7 @@ class WebSocketOperations:
         """
         Broadcast attack generation event for manual runs (includes session_id).
         """
+        debug("Broadcasting manual_attack_generated", run_id=run_id, index=index)
         await self.sio_manager.broadcast_to_room(
             session_id, # Broadcast to session room
             'manual_attack_generated',
@@ -226,6 +238,7 @@ class WebSocketOperations:
         """
         Broadcast defence response event for manual runs (includes session_id).
         """
+        debug("Broadcasting manual_defence_response", run_id=run_id, index=index)
         await self.sio_manager.broadcast_to_room(
             session_id, # Broadcast to session room
             'manual_defence_response',
@@ -250,6 +263,7 @@ class WebSocketOperations:
         """
         Broadcast evaluation completion event for manual runs (includes session_id).
         """
+        debug("Broadcasting manual_evaluation_complete", run_id=run_id, index=index)
         await self.sio_manager.broadcast_to_room(
             session_id, # Broadcast to session room
             'manual_evaluation_complete',
@@ -273,6 +287,7 @@ class WebSocketOperations:
         """
         Broadcast manual turn completion event (includes session_id).
         """
+        step("Broadcasting manual_turn_completed", run_id=run_id, index=index)
         await self.sio_manager.broadcast_to_room(
             session_id, # Broadcast to session room
             'manual_turn_completed',
@@ -297,6 +312,7 @@ class WebSocketOperations:
             run_id: Run identifier
             data: Additional data, e.g., message, last turn info.
         """
+        debug("Broadcasting run_idle", run_id=run_id)
         await self.sio_manager.broadcast_to_room(
             run_id,
             'run_idle',
@@ -311,6 +327,7 @@ class WebSocketOperations:
         """
         Broadcast that a new run is available to all connections (includes run_summary).
         """
+        step("Broadcasting new_run_available", run_id=run_id)
         await self.sio_manager.sio.emit(
             'new_run_available',
             {
@@ -329,11 +346,23 @@ class WebSocketOperations:
         """
         Send message to specific session (direct to client). This might be for specific UI feedback.
         """
+        debug("Sending personal message", session_id=session_id, event=event)
         await self.sio_manager.send_to_session(session_id, event, data)
 
 
 # Convenience function
 def get_ws_ops(socketio_manager: SocketIOManager) -> WebSocketOperations:
+    """
+    Create WebSocketOperations instance.
+    
+    Args:
+        socketio_manager: Socket.IO manager instance
+    
+    Returns:
+        WebSocketOperations instance
+    """
+    debug("Creating WebSocketOperations instance")
+    return WebSocketOperations(socketio_manager)
     """
     Create WebSocket operations instance.
     """

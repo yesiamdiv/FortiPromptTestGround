@@ -8,6 +8,7 @@ from typing import Dict, Any
 from middlewares.base import BaseMiddleware
 from server.database.connection import get_db
 from server.database.operations import get_db_ops
+from engine.debug_utils import debug, tracer, step, warn, err, checkpoint
 from engine.state_schema import SystemState, RoutingSignals
 
 
@@ -29,22 +30,21 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
         super().__init__(default_config)
 
     async def before_run(self, initial_state: SystemState, config: Dict[str, Any], run_id: str):
+        tracer("AutomaticDatabaseMiddleware.before_run", run_id=run_id)
         db = get_db()
         if db is None:
-            print("⚠️  Database not connected, skipping persistence")
+            warn("Database not connected, skipping persistence")
             return
         
         try:
-            # Run creation is handled by the API, so no need to create run document here.
-            # We can still extract strategy_name and payload for logging or future use if needed.
             strategy_config = initial_state.get("config", {}).get("strategy_config", {})
             strategy_name = strategy_config.get("strategy_name", "unknown_strategy")
             payload = initial_state.get("payload", {})
             
-            print(f"📝 Automatic run starting. Run ID: {run_id}, Strategy: {strategy_name}, Intent: {payload.get('intent', 'unknown')}")
+            debug("Automatic run starting", strategy=strategy_name, intent=payload.get('intent'))
             
         except Exception as e:
-            print(f"[AutomaticDatabaseMiddleware] Error in before_run: {e}")
+            err("Error in before_run", error=str(e))
     
     async def after_step(self, step_data, run_id):
         db = get_db()
@@ -74,7 +74,7 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
                 await self._save_evaluation(db_ops, run_id, iteration, node_output, turn_id)
             
         except Exception as e:
-            print(f"[AutomaticDatabaseMiddleware] Error in after_step: {e}")
+            err("Error in after_step", error=str(e))
     
     async def after_run(self, final_state, run_id):
         db = get_db()
@@ -98,10 +98,10 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
                 best_score=best_score
             )
             
-            print(f"✅ Automatic run completed in database: {run_id}")
+            step("Automatic run completed in database", run_id=run_id)
             
         except Exception as e:
-            print(f"[AutomaticDatabaseMiddleware] Error in after_run: {e}")
+            err("Error in after_run", error=str(e))
     
     async def on_error(self, error, run_id, step_data=None):
         db = get_db()
@@ -111,10 +111,10 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
         try:
             db_ops = get_db_ops(db)
             await db_ops.mark_run_failed(run_id, str(error))
-            print(f"❌ Automatic run failed in database: {run_id}")
+            err("Automatic run failed in database", run_id=run_id)
             
         except Exception as e:
-            print(f"[AutomaticDatabaseMiddleware] Error in on_error: {e}")
+            err("Error in on_error", error=str(e))
     
     async def _save_attack(self, db_ops, run_id, iteration, node_output, turn_id):
         turn = node_output.get("current_turn", {})
@@ -130,7 +130,7 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
             prompt=attack.to_string(),
             metadata=attack.metadata
         )
-        print(f"  💾 Attack saved (iteration {iteration})")
+        debug("Attack saved", run_id=run_id, iteration=iteration)
     
     async def _save_defence(self, db_ops, run_id, iteration, node_output, turn_id):
         turn = node_output.get("current_turn", {})
@@ -148,7 +148,7 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
             was_blocked=defence.was_blocked(),
             metadata=defence.metadata
         )
-        print(f"  💾 Defence saved (iteration {iteration})")
+        debug("Defence saved", run_id=run_id, iteration=iteration)
     
     async def _save_evaluation(self, db_ops, run_id, iteration, node_output, turn_id):
         turn = node_output.get("current_turn", {})
@@ -167,4 +167,4 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
             feedback=evaluation.get_reasoning(),
             metadata=evaluation.metadata
         )
-        print(f"  💾 Evaluation saved (iteration {iteration})")
+        debug("Evaluation saved", run_id=run_id, iteration=iteration)

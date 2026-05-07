@@ -10,6 +10,7 @@ from datetime import datetime
 from nodes.base import BaseAdversarialNode
 from engine.domain_models import create_defence_response
 from engine.state_schema import update_turn_data, SystemState
+from engine.debug_utils import debug, tracer, step, warn, err, checkpoint
 
 
 class HTTPDefenceNode(BaseAdversarialNode):
@@ -37,6 +38,7 @@ class HTTPDefenceNode(BaseAdversarialNode):
     def _get_client(self) -> httpx.AsyncClient:
         """Get or create async HTTP client"""
         if self._client is None:
+            debug("Creating new HTTP client", timeout=self.config.get("timeout", 30.0))
             self._client = httpx.AsyncClient(
                 timeout=self.config.get("timeout", 30.0),
                 follow_redirects=True
@@ -54,6 +56,7 @@ class HTTPDefenceNode(BaseAdversarialNode):
         Returns:
             Updated current_turn with defence payload
         """
+        tracer("HTTPDefenceNode.execute")
         current_turn = state.get("current_turn", {})
         attack = current_turn.get("attack")
         
@@ -63,6 +66,7 @@ class HTTPDefenceNode(BaseAdversarialNode):
         # Get endpoint from config or use default
         endpoint = self.config.get("endpoint", "/chat")
         url = f"{self.base_url}{endpoint}"
+        step("Sending request", url=url)
         
         # Prepare request payload
         payload = self._format_request(attack, state)
@@ -95,6 +99,7 @@ class HTTPDefenceNode(BaseAdversarialNode):
                 url=url,
                 request_payload=payload
             )
+            step("Got response", status=response.status_code, latency_ms=latency_ms)
             
         except httpx.TimeoutException as e:
             end_time = datetime.utcnow()
@@ -108,6 +113,7 @@ class HTTPDefenceNode(BaseAdversarialNode):
                 error="timeout",
                 url=url
             )
+            debug("Request timeout", error=str(e))
             
         except httpx.RequestError as e:
             end_time = datetime.utcnow()
@@ -121,6 +127,7 @@ class HTTPDefenceNode(BaseAdversarialNode):
                 error=str(e),
                 url=url
             )
+            debug("Request error", error=str(e))
         
         # Update turn data
         updated_turn = update_turn_data(
@@ -134,6 +141,7 @@ class HTTPDefenceNode(BaseAdversarialNode):
     async def cleanup(self):
         """Close the HTTP client"""
         if self._client:
+            debug("Closing HTTP client")
             await self._client.aclose()
             self._client = None
         

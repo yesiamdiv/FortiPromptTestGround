@@ -7,6 +7,7 @@ Replaces FastAPI WebSockets with Socket.IO for better compatibility.
 
 import socketio
 from typing import Dict, Set, Any, Optional
+from engine.debug_utils import debug, err, tracer, step, checkpoint
 
 
 class SocketIOManager:
@@ -22,6 +23,8 @@ class SocketIOManager:
     
     def __init__(self):
         """Initialize Socket.IO server"""
+        tracer("Initializing SocketIOManager")
+        
         # Create Socket.IO server with ASGI mode
         self.sio = socketio.AsyncServer(
             async_mode='asgi',
@@ -36,6 +39,7 @@ class SocketIOManager:
         
         # Register event handlers
         self._register_handlers()
+        checkpoint("SocketIOManager ready")
     
     def _register_handlers(self):
         """Register Socket.IO event handlers"""
@@ -43,7 +47,7 @@ class SocketIOManager:
         @self.sio.event
         async def connect(sid, environ):
             """Handle client connection"""
-            print(f"🔌 Socket.IO client connected: {sid}")
+            debug("Socket.IO client connected", sid=sid)
             await self.sio.emit('connected', {
                 'status': 'connected',
                 'session_id': sid
@@ -52,7 +56,7 @@ class SocketIOManager:
         @self.sio.event
         async def disconnect(sid):
             """Handle client disconnection"""
-            print(f"🔌 Socket.IO client disconnected: {sid}")
+            debug("Socket.IO client disconnected", sid=sid)
             
             # Clean up room membership
             if sid in self.session_runs:
@@ -73,6 +77,7 @@ class SocketIOManager:
                 "run_id": "run_abc123"
             }
             """
+            tracer("Client joining room", sid=sid)
             try:
                 run_id = data.get('run_id')
                 if not run_id:
@@ -90,15 +95,15 @@ class SocketIOManager:
                 self.run_rooms[run_id].add(sid)
                 self.session_runs[sid] = run_id
                 
-                print(f"👥 Client {sid} joined room: {run_id}")
+                step("Client joined room", run_id=run_id, sid=sid)
                 
                 await self.sio.emit('room_joined', {
                     'run_id': run_id,
                     'message': f'Joined room for run {run_id}'
                 }, to=sid)
-                
+
             except Exception as e:
-                print(f"❌ Error joining room: {e}")
+                err(f"Error joining room: {e}")
                 await self.sio.emit('error', {
                     'message': str(e)
                 }, to=sid)
@@ -113,6 +118,7 @@ class SocketIOManager:
                 "run_id": "run_abc123"
             }
             """
+            debug("Client leaving room", sid=sid)
             try:
                 run_id = data.get('run_id')
                 if not run_id:
@@ -130,7 +136,7 @@ class SocketIOManager:
                 if sid in self.session_runs and self.session_runs[sid] == run_id:
                     del self.session_runs[sid]
                 
-                print(f"👥 Client {sid} left room: {run_id}")
+                debug("Client left room", run_id=run_id, sid=sid)
                 
                 await self.sio.emit('room_left', {
                     'run_id': run_id,
@@ -138,11 +144,12 @@ class SocketIOManager:
                 }, to=sid)
                 
             except Exception as e:
-                print(f"❌ Error leaving room: {e}")
+                err(f"Error leaving room: {e}")
         
         @self.sio.event
         async def ping(sid, data):
             """Handle ping for connection health check"""
+            debug("Ping received", sid=sid)
             await self.sio.emit('pong', {'timestamp': data.get('timestamp')}, to=sid)
     
     async def broadcast_to_room(self, run_id: str, event: str, data: Dict[str, Any]):
@@ -154,10 +161,12 @@ class SocketIOManager:
             event: Event name
             data: Data to send
         """
+        tracer("Broadcasting to room", run_id=run_id, event=event)
         try:
             await self.sio.emit(event, data, room=run_id)
+            step("Broadcasted to room", run_id=run_id, event=event)
         except Exception as e:
-            print(f"❌ Broadcast error: {e}")
+            err(f"Broadcast error: {e}")
     
     async def send_to_session(self, session_id: str, event: str, data: Dict[str, Any]):
         """
@@ -168,10 +177,12 @@ class SocketIOManager:
             event: Event name
             data: Data to send
         """
+        tracer("Sending to session", session_id=session_id, event=event)
         try:
             await self.sio.emit(event, data, to=session_id)
+            step("Sent to session", session_id=session_id, event=event)
         except Exception as e:
-            print(f"❌ Send error: {e}")
+            err(f"Send error: {e}")
     
     def get_room_count(self, run_id: str) -> int:
         """
@@ -183,6 +194,7 @@ class SocketIOManager:
         Returns:
             Number of connected clients
         """
+        debug("Getting room count", run_id=run_id)
         return len(self.run_rooms.get(run_id, set()))
     
     def get_total_connections(self) -> int:
@@ -192,6 +204,7 @@ class SocketIOManager:
         Returns:
             Total connection count
         """
+        debug("Getting total connections")
         return len(self.session_runs)
     
     def get_active_runs(self) -> list:
@@ -201,6 +214,7 @@ class SocketIOManager:
         Returns:
             List of run IDs
         """
+        debug("Getting active runs")
         return list(self.run_rooms.keys())
     
     def get_asgi_app(self):
@@ -210,6 +224,7 @@ class SocketIOManager:
         Returns:
             Socket.IO ASGI app
         """
+        debug("Getting ASGI app")
         return socketio.ASGIApp(self.sio)
 
 

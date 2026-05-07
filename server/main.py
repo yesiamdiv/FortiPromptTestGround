@@ -1,5 +1,6 @@
 """
-Main FastAPI Application - Updated with API Route Integration and Unified Registry"""
+Main FastAPI Application - Updated with API Route Integration and Unified Registry
+"""
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +18,7 @@ from server.run_manager import get_run_manager
 
 # Unified registry for all components
 from engine.registry import register_all_components # Use unified registration
+from engine.debug_utils import debug, err, tracer, step, checkpoint, warn
 
 
 # ============================================================================
@@ -30,58 +32,65 @@ async def lifespan(app: FastAPI):
     Handles startup and shutdown tasks, including registry initialization.
     """
     # === STARTUP ===
-    print("🚀 Starting Adversarial Testing Engine...")
+    tracer("Server startup initiated")
     
     # 1. Initialize database
     try:
         mongo_url = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
         db_name = os.getenv("MONGODB_DB_NAME", "adversarial_testing")
+        step("Initializing database", mongo_url=mongo_url, db_name=db_name)
         await init_db(mongo_url, db_name)
-        print("✓ Database connected")
+        checkpoint("Database connected successfully")
     except Exception as e:
+        err(f"Database connection failed: {e}")
         print(f"⚠ Database connection failed: {e}")
     
     # 2. Initialize Socket.IO
     socketio_manager = get_socketio_manager()
-    print("✓ Socket.IO initialized")
+    step("Socket.IO manager initialized")
+    checkpoint("Socket.IO ready")
     
     # 3. Initialize run manager
     run_manager = get_run_manager()
-    print("✓ Run manager initialized")
+    step("Run manager initialized")
+    checkpoint("Run manager ready")
     
     # 4. Initialize Registries (nodes, strategies, providers)
     try:
+        step("Registering all components (nodes, strategies, providers)")
         register_all_components() # Call the unified registration function
-        print("✓ All components registered (nodes, strategies, providers)")
+        checkpoint("All components registered")
     except Exception as e:
+        err(f"Component registration failed: {e}")
         raise e # Re-raise for detailed traceback
 
     # 5. Restore existing runs (This part might need re-evaluation based on new state management)
     # Consider re-implementing if needed, ensuring it aligns with manual/automatic distinctions.
     # For now, skipping direct run restoration in lifespan to focus on API/Middleware setup.
     
-    print("🎉 Server ready to accept requests!\n")
+    checkpoint("Server ready to accept requests")
     
     yield # Application runs here
     
     # === SHUTDOWN ===
-    print("\n🛑 Shutting down Adversarial Testing Engine...")
-
+    tracer("Server shutdown initiated")
+    
     # Stop all active runs
     active_runs = run_manager.get_active_runs()
+    step(f"Stopping {len(active_runs)} active runs")
     
     for run_id in active_runs:
         try:
             await run_manager.stop_run(run_id)
-            print(f"✓ Stopped run: {run_id}")
+            step(f"Stopped run: {run_id}")
         except Exception as e:
-            print(f"⚠ Failed to stop run {run_id}: {e}")
+            warn(f"Failed to stop run {run_id}: {e}")
     
     # Close database connection
     await close_db()
-    print("✓ Database closed")
+    checkpoint("Database closed")
     
-    print("👋 Shutdown complete")
+    debug("Shutdown complete")
 
 
 # ============================================================================
@@ -123,6 +132,7 @@ app.include_router(manual_router, prefix="/api/v1")    # Manual session and turn
 @app.get("/")
 async def root():
     """Root endpoint providing basic server info."""
+    debug("Root endpoint accessed")
     return {
         "name": "Adversarial Testing Engine",
         "version": "2.0.0",
@@ -165,9 +175,9 @@ if __name__ == "__main__":
     port = int(os.getenv("SERVER_PORT", "8000"))
     reload = os.getenv("SERVER_RELOAD", "true").lower() == "true"
     
-    print(f"\n🌐 Starting server on http://{host}:{port}")
-    print(f"📚 API docs available at http://{host}:{port}/docs")
-    print(f"🔌 Socket.IO available at http://{host}:{port}/socket\n")
+    tracer(f"Starting uvicorn server", host=host, port=port)
+    debug(f"API docs available at http://{host}:{port}/docs")
+    debug(f"Socket.IO available at http://{host}:{port}/socket")
     
     uvicorn.run(
         "server.main:app",

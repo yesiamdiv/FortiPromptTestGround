@@ -16,8 +16,9 @@ from server.database.models_v2 import (
     ManualTurn,
     ManualSession
 )
-from server.config.models import GraphConfig # Import GraphConfig for type hinting and Pydantic parsing
-from engine.state_schema import SystemState # Corrected import for SystemState
+from engine.debug_utils import checkpoint, debug, err, tracer, step
+from server.config.models import GraphConfig
+from engine.state_schema import SystemState
 
 
 
@@ -36,6 +37,7 @@ class DatabaseOperations:
         Args:
             db: MongoDB database instance
         """
+        tracer("DatabaseOperations initialized")
         self.db = db
         self.runs = db.runs
         self.attacks = db.attacks
@@ -58,6 +60,8 @@ class DatabaseOperations:
         Returns:
             run_id of created run
         """
+        tracer("Creating run", run_id=run_data.get("run_id"))
+        
         if 'graph_config' not in run_data:
             raise ValueError("Graph configuration is missing in run_data.")
         
@@ -68,6 +72,7 @@ class DatabaseOperations:
         }
         
         result = await self.runs.insert_one(run_doc)
+        step("Run created", run_id=run_data.get("run_id"))
         return run_data["run_id"]
     
     async def get_run(self, run_id: str) -> Optional[RunModel]:
@@ -80,6 +85,7 @@ class DatabaseOperations:
         Returns:
             RunModel instance or None.
         """
+        debug("Getting run", run_id=run_id)
         run_doc = await self.runs.find_one({"run_id": run_id})
         if run_doc:
             run_doc.pop("_id", None)
@@ -97,6 +103,7 @@ class DatabaseOperations:
         Returns:
             True if updated, False if not found
         """
+        debug("Updating run", run_id=run_id, updates=list(updates.keys()))
         result = await self.runs.update_one(
             {"run_id": run_id},
             {"$set": updates}
@@ -116,7 +123,10 @@ class DatabaseOperations:
         Returns:
             True or false
         """
-        return await self.runs.delete_one({"run_id": run_id})
+        tracer("Deleting run", run_id=run_id)
+        result = await self.runs.delete_one({"run_id": run_id})
+        step("Run deleted", run_id=run_id)
+        return result.deleted_count > 0
 
     async def mark_run_completed(
         self,
@@ -135,6 +145,7 @@ class DatabaseOperations:
         Returns:
             True if updated
         """
+        debug("Marking run completed", run_id=run_id)
         updates = {
             "status": "completed",
             "completed_at": datetime.utcnow().isoformat()
@@ -145,6 +156,7 @@ class DatabaseOperations:
         if best_score is not None:
             updates["best_score"] = best_score
         
+        step("Run marked completed", run_id=run_id)
         return await self.update_run(run_id, updates)
     
     async def mark_run_failed(self, run_id: str, error: str) -> bool:
@@ -158,6 +170,7 @@ class DatabaseOperations:
         Returns:
             True if updated
         """
+        err(f"Marking run failed: {error}")
         return await self.update_run(run_id, {
             "status": "failed",
             "completed_at": datetime.utcnow().isoformat(),
@@ -181,6 +194,7 @@ class DatabaseOperations:
         Returns:
             List of RunModel instances
         """
+        tracer("Listing runs", status=status, limit=limit, skip=skip)
         query = {}
         if status:
             query["status"] = status
@@ -188,6 +202,7 @@ class DatabaseOperations:
         cursor = self.runs.find(query).sort("created_at", -1).skip(skip).limit(limit)
         run_docs = await cursor.to_list(length=limit)
         
+        step(f"Found {len(run_docs)} runs")
         return [RunModel(**{k: v for k, v in doc.items() if k != "_id"}) for doc in run_docs]
     
     # ========================================================================
@@ -217,6 +232,7 @@ class DatabaseOperations:
         Returns:
             Inserted document ID
         """
+        tracer("Saving attack", run_id=run_id, index=index, turn_id=turn_id)
         attack_doc = {
             "run_id": run_id,
             "index": index,
@@ -227,6 +243,7 @@ class DatabaseOperations:
         }
         
         result = await self.attacks.insert_one(attack_doc)
+        step("Attack saved", run_id=run_id, index=index)
         return str(result.inserted_id)
     
     async def get_attacks(self, run_id: str) -> List[AttackData]:
@@ -239,9 +256,11 @@ class DatabaseOperations:
         Returns:
             List of AttackData instances
         """
+        debug("Getting attacks", run_id=run_id)
         cursor = self.attacks.find({"run_id": run_id}).sort("index", 1)
         attack_docs = await cursor.to_list(length=None)
         
+        step(f"Found {len(attack_docs)} attacks", run_id=run_id)
         return [AttackData(**{k: v for k, v in doc.items() if k != "_id"}) for doc in attack_docs]    
     # ========================================================================
     # Defence Operations
@@ -274,6 +293,7 @@ class DatabaseOperations:
         Returns:
             Inserted document ID
         """
+        tracer("Saving defence", run_id=run_id, index=index, was_blocked=was_blocked)
         defence_doc = {
             "run_id": run_id,
             "index": index,
@@ -286,6 +306,7 @@ class DatabaseOperations:
         }
         
         result = await self.defences.insert_one(defence_doc)
+        step("Defence saved", run_id=run_id, index=index)
         return str(result.inserted_id)
     
     async def get_defences(self, run_id: str) -> List[DefenceData]:
@@ -298,10 +319,11 @@ class DatabaseOperations:
         Returns:
             List of DefenceData instances
         """
+        debug("Getting defences", run_id=run_id)
         cursor = self.defences.find({"run_id": run_id}).sort("index", 1)
         defence_docs = await cursor.to_list(length=None)
         
-        # return [DefenceData(**doc.pop("_id", None) or doc) for doc in defence_docs]
+        step(f"Found {len(defence_docs)} defences", run_id=run_id)
         return [DefenceData(**{k: v for k, v in doc.items() if k != "_id"}) for doc in defence_docs]
     
     # ========================================================================
@@ -337,6 +359,7 @@ class DatabaseOperations:
         Returns:
             Inserted document ID
         """
+        tracer("Saving evaluation", run_id=run_id, index=index, score=score, success=success)
         eval_doc = {
             "run_id": run_id,
             "index": index,
@@ -350,6 +373,7 @@ class DatabaseOperations:
         }
         
         result = await self.evaluations.insert_one(eval_doc)
+        step("Evaluation saved", run_id=run_id, index=index, score=score)
         return str(result.inserted_id)
     
     async def get_evaluations(self, run_id: str) -> List[EvaluationData]:
@@ -362,10 +386,11 @@ class DatabaseOperations:
         Returns:
             List of EvaluationData instances
         """
+        debug("Getting evaluations", run_id=run_id)
         cursor = self.evaluations.find({"run_id": run_id}).sort("index", 1)
         eval_docs = await cursor.to_list(length=None)
         
-        # return [EvaluationData(**doc.pop("_id", None) or doc) for doc in eval_docs]
+        step(f"Found {len(eval_docs)} evaluations", run_id=run_id)
         return [EvaluationData(**{k: v for k, v in doc.items() if k != "_id"}) for doc in eval_docs]
 
     # ========================================================================
@@ -391,6 +416,7 @@ class DatabaseOperations:
         Returns:
             The newly created session_id.
         """
+        tracer("Creating manual session", run_id=run_id, name=name)
         session_id = f"sess_{uuid.uuid4().hex[:12]}"
         session_doc = {
             "session_id": session_id,
@@ -405,12 +431,14 @@ class DatabaseOperations:
             "state_checkpoint": initial_state_checkpoint  # Save initial state
         }
         await self.manual_sessions.insert_one(session_doc)
+        step("Manual session created", session_id=session_id, run_id=run_id)
         return session_id
     
     async def get_manual_session(self, session_id: str) -> Optional[ManualSession]:
         """
         Get a manual session by its ID.
         """
+        debug("Getting manual session", session_id=session_id)
         session_doc = await self.manual_sessions.find_one({"session_id": session_id})
         if session_doc:
             session_doc.pop("_id", None)
@@ -428,6 +456,7 @@ class DatabaseOperations:
         """
         Update the state checkpoint and final scores for a manual session.
         """
+        debug("Updating manual session state", session_id=session_id)
         updates = {
             "state_checkpoint": state_checkpoint,
             "updated_at": datetime.utcnow().isoformat()
@@ -441,12 +470,14 @@ class DatabaseOperations:
             {"session_id": session_id, "run_id": run_id},
             {"$set": updates}
         )
+        step("Session state updated", session_id=session_id)
         return result.modified_count > 0
     
     async def get_last_manual_turn_for_session(self, session_id: str) -> Optional[ManualTurn]:
         """
         Get the last manual turn for a given session, ordered by index.
         """
+        debug("Getting last manual turn", session_id=session_id)
         turn_doc = await self.manual_turns.find(
             {"session_id": session_id}
         ).sort("index", -1).limit(1).to_list(length=1)
@@ -470,6 +501,7 @@ class DatabaseOperations:
         """
         Create a new manual turn document.
         """
+        tracer("Creating manual turn", session_id=session_id, turn_id=turn_id, index=index)
         manual_turn_doc = {
             "session_id": session_id,
             "run_id": run_id,
@@ -490,12 +522,14 @@ class DatabaseOperations:
             {"session_id": session_id},
             {"$push": {"turn_ids": turn_id}, "$inc": {"total_turns": 1}, "$set": {"updated_at": datetime.utcnow().isoformat()}}
         )
+        step("Manual turn created", turn_id=turn_id, index=index)
         return turn_id
     
     async def get_manual_turn(self, turn_id: str) -> Optional[ManualTurn]:
         """
         Get a manual turn by its ID.
         """
+        debug("Getting manual turn", turn_id=turn_id)
         turn_doc = await self.manual_turns.find_one({"turn_id": turn_id})
         if turn_doc:
             turn_doc.pop("_id", None)
@@ -506,8 +540,10 @@ class DatabaseOperations:
         """
         Get all manual turns for a given session, ordered by index.
         """
+        tracer("Getting manual turns for session", session_id=session_id)
         cursor = self.manual_turns.find({"session_id": session_id}).sort("index", 1)
         turn_docs = await cursor.to_list(length=None)
+        step(f"Found {len(turn_docs)} turns", session_id=session_id)
         return [ManualTurn(**{k: v for k, v in doc.items() if k != "_id"}) for doc in turn_docs]
     
     async def update_manual_turn_data(
@@ -533,6 +569,7 @@ class DatabaseOperations:
         This method is designed to be called by middlewares or nodes as data becomes available.
         It also updates the corresponding AttackData, DefenceData, EvaluationData documents.
         """
+        tracer("Updating manual turn data", session_id=session_id, turn_id=turn_id)
         updates = {"updated_at": datetime.utcnow().isoformat()}
         
         # Update attack data and link to turn
@@ -545,6 +582,7 @@ class DatabaseOperations:
                 metadata=attack_metadata
             )
             updates["attack_data_id"] = attack_id
+            step("Attack data updated", turn_id=turn_id)
 
         # Update defence data and link to turn
         if defence_response is not None:
@@ -558,6 +596,7 @@ class DatabaseOperations:
                 metadata=defence_metadata
             )
             updates["defence_data_id"] = defence_id
+            step("Defence data updated", turn_id=turn_id)
 
         # Update evaluation data and link to turn
         if evaluation_score is not None:
@@ -572,6 +611,7 @@ class DatabaseOperations:
                 metadata=evaluation_metadata
             )
             updates["evaluation_data_id"] = evaluation_id
+            step("Evaluation data updated", turn_id=turn_id, score=evaluation_score)
             
         if state_checkpoint is not None:
             updates["state_checkpoint"] = state_checkpoint
@@ -580,6 +620,7 @@ class DatabaseOperations:
             {"session_id": session_id, "turn_id": turn_id},
             {"$set": updates}
         )
+        checkpoint("Manual turn data update complete", turn_id=turn_id)
         return result.modified_count > 0
     
     # ========================================================================
@@ -597,4 +638,5 @@ def get_db_ops(db: AsyncIOMotorDatabase) -> DatabaseOperations:
     Returns:
         DatabaseOperations instance
     """
+    debug("Creating DatabaseOperations instance")
     return DatabaseOperations(db)

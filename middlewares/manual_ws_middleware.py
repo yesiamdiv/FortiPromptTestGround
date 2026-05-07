@@ -8,6 +8,7 @@ from typing import Dict, Any
 from middlewares.base import BaseMiddleware
 from server.websocket.socketio_manager import SocketIOManager
 from server.websocket.operations import get_ws_ops
+from engine.debug_utils import debug, tracer, step, warn, err
 from engine.state_schema import SystemState, RoutingSignals
 
 
@@ -31,10 +32,8 @@ class ManualWSMiddleware(BaseMiddleware):
         self.ws_ops = get_ws_ops(socketio_manager)
 
     async def before_run(self, initial_state: SystemState, config: Dict[str, Any], run_id: str):
-        """
-        Broadcast run start event for manual mode.
-        Also joins the client to the session-specific WebSocket room.
-        """
+        """Broadcast run start event for manual mode."""
+        tracer("ManualWSMiddleware.before_run", run_id=run_id)
         try:
             strategy_config = initial_state.get("config", {}).get("strategy_config", {})
             strategy_name = strategy_config.get("strategy_name", "unknown_strategy")
@@ -42,7 +41,8 @@ class ManualWSMiddleware(BaseMiddleware):
             session_id = initial_state.get("session_id", payload.get("session_id")) 
 
             if session_id:
-                await self.ws_ops.sio_manager.join_room(session_id) 
+                await self.ws_ops.sio_manager.join_room(session_id)
+                debug("Joined session room", session=session_id)
             
             await self.ws_ops.broadcast_run_started(
                 run_id,
@@ -54,14 +54,13 @@ class ManualWSMiddleware(BaseMiddleware):
                     'session_id': session_id 
                 }
             )
+            debug("Run started broadcast sent")
             
         except Exception as e:
-            print(f"[ManualWSMiddleware] Error in before_run: {e}")
+            err("Error in before_run", error=str(e))
 
     async def after_step(self, step_data, run_id):
-        """
-        Broadcast step updates using manual-specific events.
-        """
+        """Broadcast step updates using manual-specific events."""
         if not step_data:
             return
         
@@ -75,7 +74,7 @@ class ManualWSMiddleware(BaseMiddleware):
             session_id = context.get("session_id") 
 
             if not session_id:
-                print(f"[ManualWSMiddleware] Warning: session_id missing in context for node {node_name}. Skipping manual broadcast.")
+                warn("Missing session_id, skipping manual broadcast", node=node_name)
                 return
 
             if node_name == "attack" and self.config.get("broadcast_attacks"):
@@ -105,19 +104,18 @@ class ManualWSMiddleware(BaseMiddleware):
                 )
             
         except Exception as e:
-            print(f"[ManualWSMiddleware] Error in after_step: {e}")
+            err("Error in after_step", error=str(e))
 
     async def after_run(self, final_state: SystemState, run_id: str):
-        """
-        Broadcast run idle event for manual runs after a turn completes.
-        """
+        """Broadcast run idle event for manual runs after a turn completes."""
+        tracer("ManualWSMiddleware.after_run", run_id=run_id)
         try:
             context = final_state.get("strategy_context", {})
             current_turn = final_state.get("current_turn", {})
             
             session_id = context.get("session_id") 
             if not session_id:
-                print(f"[ManualWSMiddleware] Warning: session_id missing in final_state context for run {run_id}. Cannot broadcast run_idle.")
+                warn("Missing session_id in final_state, cannot broadcast run_idle", run_id=run_id)
                 return
 
             await self.ws_ops.broadcast_run_idle(
@@ -129,9 +127,10 @@ class ManualWSMiddleware(BaseMiddleware):
                     'session_id': session_id 
                 }
             )
+            debug("Run idle broadcast sent")
             
         except Exception as e:
-            print(f"[ManualWSMiddleware] Error in after_run: {e}")
+            err("Error in after_run", error=str(e))
     
     async def on_error(self, error, run_id, step_data=None):
         """Broadcast error event"""
@@ -141,8 +140,9 @@ class ManualWSMiddleware(BaseMiddleware):
                 error=str(error),
                 error_type=type(error).__name__
             )
+            debug("Error broadcast sent")
         except Exception as e:
-            print(f"[ManualWSMiddleware] Error in on_error: {e}")
+            err("Error in on_error", error=str(e))
     
     async def _broadcast_attack(self, run_id, iteration, node_output, turn_id):
         turn = node_output.get("current_turn", {})

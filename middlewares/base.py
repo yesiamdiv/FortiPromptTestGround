@@ -2,6 +2,7 @@
 
 from abc import ABC
 from typing import Dict, Any
+from engine.debug_utils import debug, tracer
 
 
 class BaseMiddleware(ABC):
