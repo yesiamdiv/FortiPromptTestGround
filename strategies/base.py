@@ -56,3 +56,10 @@ class AttackStrategy(ABC):
         This is used by the frontend to render input fields for required parameters.
         """
         raise NotImplementedError
+    
+    @classmethod
+    def get_strategy_schema(cls) -> Dict[str, Any]:
+        """
+        Alias for get_dependency_schema for consistency with node_params naming.
+        """
+        return cls.get_dependency_schema()

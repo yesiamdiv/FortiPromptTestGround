@@ -21,19 +21,17 @@ class WorkflowEngine:
     async def execute_run(
         self,
         payload: Dict[str, Any],
-        graph_config: Any,  # The structural GraphConfig (Pydantic model)
+        config: Any,
         run_id: str = None
-    ) -> SystemState:  # UPDATE RETURN TYPE
+    ) -> SystemState:
         
         run_id = run_id or f"run_{uuid.uuid4().hex[:12]}"
         tracer("execute_run started", run_id=run_id)
         
-        # Extract the runtime_config from the payload
         runtime_config = payload.pop("runtime_config", {})
         step("Extracted runtime_config", config_keys=list(runtime_config.keys()))
         
-        # Convert Pydantic graph_config to dict for the state
-        state_config_dict = graph_config.dict() if hasattr(graph_config, 'dict') else {}
+        state_config_dict = config.dict() if hasattr(config, 'dict') else {}
 
         # Create state using the structural config!
         initial_state = create_initial_state(run_id, payload, state_config_dict)
@@ -65,7 +63,7 @@ class WorkflowEngine:
         final_state = initial_state.copy()
         step("Starting streaming execution", run_id=run_id)
         
-        async for step_data in self.graph.astream(initial_state, runtime_config): # Use runtime_config here
+        async for step_data in self.graph.astream(initial_state):
             await self._trigger_after_step(step_data, run_id)
             
             updates = self._extract_updates(step_data)

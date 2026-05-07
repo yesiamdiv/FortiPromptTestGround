@@ -37,29 +37,42 @@ class ConfigurableGraphBuilder:
         try:
             # Instantiate Attack Node
             attack_config = self.graph_config.attack_node_config.dict()
-            # Inject the strategy instance into the attack node's config
-            attack_config["strategy"] = self.strategy 
+            attack_config["strategy"] = self.strategy
+            if "node_params" in attack_config:
+                attack_config.update(attack_config.pop("node_params"))
             attack_node_instance = self.node_registry.get(
                 self.graph_config.attack_node_config.node_type,
                 config=attack_config 
             )
-            self.graph.add_node("attack", attack_node_instance.execute)
+            async def attack_wrapper(state: SystemState) -> Dict[str, Any]:
+                return await attack_node_instance.execute(state)
+            self.graph.add_node("attack", attack_wrapper)
             step("Added attack node", node_type=self.graph_config.attack_node_config.node_type)
             
             # Instantiate Defense Node
+            defense_config = self.graph_config.defense_node_config.dict()
+            if "node_params" in defense_config:
+                defense_config.update(defense_config.pop("node_params"))
             defense_node_instance = self.node_registry.get(
                 self.graph_config.defense_node_config.node_type,
-                config=self.graph_config.defense_node_config.dict()
+                config=defense_config
             )
-            self.graph.add_node("defence", defense_node_instance.execute)
+            async def defense_wrapper(state: SystemState) -> Dict[str, Any]:
+                return await defense_node_instance.execute(state)
+            self.graph.add_node("defence", defense_wrapper)
             step("Added defence node", node_type=self.graph_config.defense_node_config.node_type)
 
             # Instantiate Evaluation Node
+            eval_config = self.graph_config.evaluation_node_config.dict()
+            if "node_params" in eval_config:
+                eval_config.update(eval_config.pop("node_params"))
             eval_node_instance = self.node_registry.get(
                 self.graph_config.evaluation_node_config.node_type,
-                config=self.graph_config.evaluation_node_config.dict()
+                config=eval_config
             )
-            self.graph.add_node("eval", eval_node_instance.execute)
+            async def eval_wrapper(state: SystemState) -> Dict[str, Any]:
+                return await eval_node_instance.execute(state)
+            self.graph.add_node("eval", eval_wrapper)
             step("Added eval node", node_type=self.graph_config.evaluation_node_config.node_type)
             
             # Instantiate Router Node
@@ -71,7 +84,9 @@ class ConfigurableGraphBuilder:
                     "graph_type": self.graph_config.graph_type
                 }
             )
-            self.graph.add_node("router", router_node_instance.execute)
+            async def router_wrapper(state: SystemState) -> Dict[str, Any]:
+                return await router_node_instance.execute(state)
+            self.graph.add_node("router", router_wrapper)
             step("Added router node")
             
         except ValueError as e:
@@ -86,8 +101,8 @@ class ConfigurableGraphBuilder:
             "router",
             self.router_routing_logic, 
             {
-                RoutingSignals.ATTACK: "attack",
-                RoutingSignals.CONTINUE: "attack", 
+                RoutingSignals.ATTACK: RoutingSignals.ATTACK,
+                RoutingSignals.CONTINUE: RoutingSignals.ATTACK, 
                 RoutingSignals.END: END
             }
         )

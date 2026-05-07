@@ -463,11 +463,13 @@ class MultilayerDefenseNode(BaseAdversarialNode):
             print(f"❌  An error occurred during DefenseSystem initialization for {self.name}: {e}")
             self.defense_system = None # Ensure it's None if initialization fails
 
-    async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Processes the input data through the multilayer defense pipeline.
         Retrieves input from state and returns updated state.
         """
+        if runtime_config is None:
+            runtime_config = {}
         if self.defense_system is None:
             print(f"Error: Defense System not initialized for node {self.name}. Cannot process input.")
             return {"defence": {"error": "Defense system not initialized"}, "node_name": self.name, "routing_signal": RoutingSignals.CONTINUE}
@@ -539,6 +541,23 @@ class MultilayerDefenseNode(BaseAdversarialNode):
 
         except Exception as e:
             print(f"❌ Error during defense system prediction for node {self.name}: {e}")
-            # Return an error in the state update
             return {"defence": {"error": f"Defense system failed: {e}"}, "node_name": self.name, "routing_signal": RoutingSignals.CONTINUE}
+
+    @classmethod
+    def get_node_schema(cls) -> Dict[str, Any]:
+        """Return JSON schema for node parameters"""
+        return {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name identifier for this defense node",
+                    "default": "multilayer_defense"
+                },
+                "node_configs": {
+                    "type": "object",
+                    "description": "Configuration for individual node components"
+                }
+            }
+        }
 

@@ -89,6 +89,12 @@ async def update_run_config(
             updates["description"] = request.description
         if request.strategy_params is not None:
             updates["graph_config.strategy_config.strategy_params"] = request.strategy_params
+        if request.attack_node_params is not None:
+            updates["graph_config.attack_node_config.node_params"] = request.attack_node_params
+        if request.defense_node_params is not None:
+            updates["graph_config.defense_node_config.node_params"] = request.defense_node_params
+        if request.evaluation_node_params is not None:
+            updates["graph_config.evaluation_node_config.node_params"] = request.evaluation_node_params
         
         if updates:
             await db_ops.update_run(run_id, updates)

@@ -20,6 +20,9 @@ class UpdateRunRequest(BaseModel):
     name: Optional[str] = Field(None, description="New human-readable name for the run.")
     description: Optional[str] = Field(None, description="New detailed description for the run.")
     strategy_params: Optional[Dict[str, Any]] = Field(None, description="Parameters to update for the run's strategy.")
+    attack_node_params: Optional[Dict[str, Any]] = Field(None, description="Parameters to update for the attack node.")
+    defense_node_params: Optional[Dict[str, Any]] = Field(None, description="Parameters to update for the defense node.")
+    evaluation_node_params: Optional[Dict[str, Any]] = Field(None, description="Parameters to update for the evaluation node.")
 
 class RunResponse(BaseModel):
     run_id: str

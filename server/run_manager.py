@@ -125,7 +125,7 @@ class RunExecutor:
         final_state = await self.engine.execute_run(
             payload=payload,
             run_id=self.run_id,
-            graph_config=self.graph_config # Pass the structural graph_config
+            config=self.graph_config # Pass the structural graph_config
         )
         
         self._current_state = final_state

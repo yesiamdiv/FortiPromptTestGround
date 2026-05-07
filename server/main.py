@@ -1,6 +1,5 @@
 """
-Main FastAPI Application - Updated with API Route Integration and Unified Registry
-"""
+Main FastAPI Application - Updated with API Route Integration and Unified Registry"""
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,6 +9,7 @@ import os
 # Import API routers
 from server.api.routes import router as api_router # Main API routes
 from server.api.manual_routes import router as manual_router # Import manual routes
+from server.api.discovery_routes import router as discovery_router # Discovery routes for nodes/strategies
 
 # Database and WebSocket imports
 from server.database.connection import init_db, close_db, get_db
@@ -18,7 +18,6 @@ from server.run_manager import get_run_manager
 
 # Unified registry for all components
 from engine.registry import register_all_components # Use unified registration
-from engine.debug_utils import debug, err, tracer, step, checkpoint, warn
 
 
 # ============================================================================
@@ -32,65 +31,58 @@ async def lifespan(app: FastAPI):
     Handles startup and shutdown tasks, including registry initialization.
     """
     # === STARTUP ===
-    tracer("Server startup initiated")
+    print("🚀 Starting Adversarial Testing Engine...")
     
     # 1. Initialize database
     try:
         mongo_url = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
         db_name = os.getenv("MONGODB_DB_NAME", "adversarial_testing")
-        step("Initializing database", mongo_url=mongo_url, db_name=db_name)
         await init_db(mongo_url, db_name)
-        checkpoint("Database connected successfully")
+        print("✓ Database connected")
     except Exception as e:
-        err(f"Database connection failed: {e}")
         print(f"⚠ Database connection failed: {e}")
     
     # 2. Initialize Socket.IO
     socketio_manager = get_socketio_manager()
-    step("Socket.IO manager initialized")
-    checkpoint("Socket.IO ready")
+    print("✓ Socket.IO initialized")
     
     # 3. Initialize run manager
     run_manager = get_run_manager()
-    step("Run manager initialized")
-    checkpoint("Run manager ready")
+    print("✓ Run manager initialized")
     
     # 4. Initialize Registries (nodes, strategies, providers)
     try:
-        step("Registering all components (nodes, strategies, providers)")
         register_all_components() # Call the unified registration function
-        checkpoint("All components registered")
+        print("✓ All components registered (nodes, strategies, providers)")
     except Exception as e:
-        err(f"Component registration failed: {e}")
         raise e # Re-raise for detailed traceback
 
     # 5. Restore existing runs (This part might need re-evaluation based on new state management)
     # Consider re-implementing if needed, ensuring it aligns with manual/automatic distinctions.
     # For now, skipping direct run restoration in lifespan to focus on API/Middleware setup.
     
-    checkpoint("Server ready to accept requests")
+    print("🎉 Server ready to accept requests!\n")
     
     yield # Application runs here
     
     # === SHUTDOWN ===
-    tracer("Server shutdown initiated")
-    
+    print("\n🛑 Shutting down Adversarial Testing Engine...")
+
     # Stop all active runs
     active_runs = run_manager.get_active_runs()
-    step(f"Stopping {len(active_runs)} active runs")
     
     for run_id in active_runs:
         try:
             await run_manager.stop_run(run_id)
-            step(f"Stopped run: {run_id}")
+            print(f"✓ Stopped run: {run_id}")
         except Exception as e:
-            warn(f"Failed to stop run {run_id}: {e}")
+            print(f"⚠ Failed to stop run {run_id}: {e}")
     
     # Close database connection
     await close_db()
-    checkpoint("Database closed")
+    print("✓ Database closed")
     
-    debug("Shutdown complete")
+    print("👋 Shutdown complete")
 
 
 # ============================================================================
@@ -126,13 +118,13 @@ app.add_middleware(
 # Include API routers
 app.include_router(api_router, prefix="/api/v1")       # Main API routes for runs, strategies, etc.
 app.include_router(manual_router, prefix="/api/v1")    # Manual session and turn management routes
+app.include_router(discovery_router, prefix="/api/v1") # Discovery routes for available nodes/strategies
 
 
 # Root endpoint
 @app.get("/")
 async def root():
     """Root endpoint providing basic server info."""
-    debug("Root endpoint accessed")
     return {
         "name": "Adversarial Testing Engine",
         "version": "2.0.0",
@@ -175,9 +167,9 @@ if __name__ == "__main__":
     port = int(os.getenv("SERVER_PORT", "8000"))
     reload = os.getenv("SERVER_RELOAD", "true").lower() == "true"
     
-    tracer(f"Starting uvicorn server", host=host, port=port)
-    debug(f"API docs available at http://{host}:{port}/docs")
-    debug(f"Socket.IO available at http://{host}:{port}/socket")
+    print(f"\n🌐 Starting server on http://{host}:{port}")
+    print(f"📚 API docs available at http://{host}:{port}/docs")
+    print(f"🔌 Socket.IO available at http://{host}:{port}/socket\n")
     
     uvicorn.run(
         "server.main:app",
