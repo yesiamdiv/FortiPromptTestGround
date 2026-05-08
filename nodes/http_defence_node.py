@@ -1,89 +1,103 @@
 """
-Production Defence Node
+================================================================================
+HTTP DEFENCE NODE
+================================================================================
 
-Makes actual HTTP requests to external target systems.
+DEVELOPER INSTRUCTIONS:
+--------------------------------------------------------------------------------
+1. Standalone Logic: This node acts as an agnostic webhook. It makes HTTP POST 
+   requests to a target server, assuming the server handles its own model routing.
+2. Initialization: Extracts `url` and optional `headers` from `self.config["node_params"]`.
+3. State Deltas: Returns only state updates (the 'defence' object) via a dictionary.
+4. Type Safety: Strict dictionary access for `SystemState`. No `.get()` on the root.
+================================================================================
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 import httpx
 from datetime import datetime
 from nodes.base import BaseAdversarialNode
-from engine.domain_models import create_defence_response
-from engine.state_schema import update_turn_data, SystemState
-from engine.debug_utils import debug, tracer, step, warn, err, checkpoint
+from engine.domain_models import create_defence_response, AttackPayload
+from engine.state_schema import SystemState
+from engine.debug_utils import debug, tracer, step, warn, err
 
 
 class HTTPDefenceNode(BaseAdversarialNode):
     """
-    Defence node that makes real HTTP API calls to target systems.
+    Defence node that makes real HTTP API calls to an external target server.
+    The external server is expected to handle model routing, auth, and execution.
     """
     
-    def __init__(
-        self,
-        base_url: str,
-        api_key: Optional[str] = None,
-        headers: Optional[Dict[str, str]] = None,
-        config: Dict[str, Any] = None
-    ):
+    def __init__(self, config: Dict[str, Any] = None):
         super().__init__(config)
-        self.base_url = base_url.rstrip('/')
-        self.api_key = api_key
-        self.default_headers = headers or {}
         
-        if self.api_key:
-            self.default_headers["Authorization"] = f"Bearer {self.api_key}"
+        self.node_params = self.config["node_params"] if "node_params" in self.config else {}
+        
+        # We only care about where to send the payload
+        self.url = self.node_params["url"] if "url" in self.node_params else ""
+        self.default_headers = self.node_params["headers"] if "headers" in self.node_params else {}
+        self.timeout = self.node_params["timeout"] if "timeout" in self.node_params else 30.0
+        
+        if not self.url:
+            warn("HTTPDefenceNode initialized without a 'url' in node_params.")
         
         self._client = None
     
     def _get_client(self) -> httpx.AsyncClient:
         """Get or create async HTTP client"""
         if self._client is None:
-            debug("Creating new HTTP client", timeout=self.config.get("timeout", 30.0))
+            debug("Creating new HTTP client", timeout=self.timeout)
             self._client = httpx.AsyncClient(
-                timeout=self.config.get("timeout", 30.0),
+                timeout=self.timeout,
                 follow_redirects=True
             )
         return self._client
+        
+    def _format_request(self, attack: AttackPayload) -> Dict[str, Any]:
+        """Format a simple, agnostic HTTP payload."""
+        # Just send the prompt. The target server handles the rest.
+        return {"prompt": attack.to_string()}
     
-    async def execute(self, state: SystemState, runtime_config: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Send attack to target system and capture response.
-        
-        Args:
-            state: Current system state
-            runtime_config: Runtime configuration.
-        
-        Returns:
-            Updated current_turn with defence payload
-        """
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Sends the attack to the target system and captures the response."""
+        if runtime_config is None: runtime_config = {}
         tracer("HTTPDefenceNode.execute")
-        current_turn = state.get("current_turn", {})
-        attack = current_turn.get("attack")
+        
+        # STRICT STATE ACCESS
+        if "current_turn" not in state:
+            raise ValueError("Corrupted state: Missing 'current_turn'.")
+            
+        current_turn = state["current_turn"]
+        attack = current_turn["attack"] if "attack" in current_turn else None
         
         if not attack:
-            raise ValueError("No attack payload found in current_turn")
+            raise ValueError("No attack payload found in current_turn to send to HTTP defence.")
         
-        # Get endpoint from config or use default
-        endpoint = self.config.get("endpoint", "/chat")
-        url = f"{self.base_url}{endpoint}"
-        step("Sending request", url=url)
+        # RUNTIME OVERRIDES (in case you want to switch URLs mid-run)
+        active_url = runtime_config["url"] if "url" in runtime_config else self.url
         
-        # Prepare request payload
-        payload = self._format_request(attack, state)
+        if not active_url:
+            err("No URL provided for HTTPDefenceNode.")
+            from engine.domain_models import create_defence_response
+            error_defence = create_defence_response("No URL configured for target server", status_code=400)
+            return {"current_turn": {"defence": error_defence, "node_name": self.name}}
+
+        step("Sending request to target server", url=active_url)
         
-        # Merge headers
+        payload = self._format_request(attack)
+        
+        # Merge headers (runtime headers override static headers)
         headers = {**self.default_headers}
-        if "headers" in self.config:
-            headers.update(self.config["headers"])
+        if "headers" in runtime_config:
+            headers.update(runtime_config["headers"])
         
-        # Make request with timing
         start_time = datetime.utcnow()
         
         try:
             client = self._get_client()
             
             response = await client.post(
-                url,
+                active_url,
                 json=payload,
                 headers=headers
             )
@@ -95,11 +109,11 @@ class HTTPDefenceNode(BaseAdversarialNode):
                 text=response.text,
                 status_code=response.status_code,
                 headers=dict(response.headers),
-                latency_ms=latency_ms,
-                url=url,
+                latency_ms=max(10, latency_ms),
+                url=active_url,
                 request_payload=payload
             )
-            step("Got response", status=response.status_code, latency_ms=latency_ms)
+            step("Got response from server", status=response.status_code, latency_ms=latency_ms)
             
         except httpx.TimeoutException as e:
             end_time = datetime.utcnow()
@@ -111,7 +125,7 @@ class HTTPDefenceNode(BaseAdversarialNode):
                 headers={},
                 latency_ms=latency_ms,
                 error="timeout",
-                url=url
+                url=active_url
             )
             debug("Request timeout", error=str(e))
             
@@ -121,22 +135,21 @@ class HTTPDefenceNode(BaseAdversarialNode):
             
             defence = create_defence_response(
                 text=f"Request error: {str(e)}",
-                status_code=0,
+                status_code=500, 
                 headers={},
                 latency_ms=latency_ms,
                 error=str(e),
-                url=url
+                url=active_url
             )
             debug("Request error", error=str(e))
         
-        # Update turn data
-        updated_turn = update_turn_data(
-            current_turn,
-            defence=defence,
-            node_name="defence"
-        )
-        
-        return {"current_turn": updated_turn}
+        # RETURN CLEAN DELTA
+        return {
+            "current_turn": {
+                "defence": defence,
+                "node_name": getattr(self, "name", "http_defence")
+            }
+        }
     
     async def cleanup(self):
         """Close the HTTP client"""
@@ -144,26 +157,25 @@ class HTTPDefenceNode(BaseAdversarialNode):
             debug("Closing HTTP client")
             await self._client.aclose()
             self._client = None
-        
 
-class OpenAIDefenceNode(HTTPDefenceNode):
-    """
-    Specialized defence node for OpenAI API format.
-    """
-    
-    def __init__(self, api_key: str, model: str = "gpt-3.5-turbo", config: Dict[str, Any] = None):
-        super().__init__(
-            base_url="https://api.openai.com/v1",
-            api_key=api_key,
-            config=config
-        )
-        self.model = model
-    
-    def _format_request(self, attack, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Format for OpenAI chat completions API"""
+    @classmethod
+    def get_node_schema(cls) -> Dict[str, Any]:
         return {
-            "model": self.model,
-            "messages": attack.to_messages(),
-            "temperature": 0.7,
-            "max_tokens": 500
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "Full URL of the target server to test"
+                },
+                "headers": {
+                    "type": "object",
+                    "description": "Optional headers to include in the request (e.g., custom auth tokens)"
+                },
+                "timeout": {
+                    "type": "number",
+                    "description": "Request timeout in seconds",
+                    "default": 30.0
+                }
+            },
+            "required": ["url"]
         }

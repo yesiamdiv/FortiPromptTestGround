@@ -468,80 +468,66 @@ class MultilayerDefenseNode(BaseAdversarialNode):
         Processes the input data through the multilayer defense pipeline.
         Retrieves input from state and returns updated state.
         """
-        if runtime_config is None:
-            runtime_config = {}
+        if runtime_config is None: runtime_config = {}
+        
         if self.defense_system is None:
             print(f"Error: Defense System not initialized for node {self.name}. Cannot process input.")
-            return {"defence": {"error": "Defense system not initialized"}, "node_name": self.name, "routing_signal": RoutingSignals.CONTINUE}
+            # Fail gracefully with a Domain Model
+            from engine.domain_models import create_defence_response
+            error_defence = create_defence_response("Defense system not initialized", status_code=500)
+            return {"current_turn": {"defence": error_defence, "node_name": self.name}}
             
         print(f"🚀 Executing Multilayer Defense node: {self.name}")
         
-        # --- Retrieve input data from state ---
-        input_prompt = None
-        prompt_key_attempts = ['input_prompt', 'prompt', 'text', 'attack_prompt'] # Common keys for input prompt
+        # --- 1. STRICT STATE ACCESS & DOMAIN MODELS ---
+        if "current_turn" not in state:
+            raise ValueError("Corrupted state: Missing 'current_turn'.")
+            
+        current_turn = state["current_turn"]
+        attack = current_turn["attack"] if "attack" in current_turn else None
+        
+        input_prompt = ""
+        if attack:
+            # Use the Domain Model's built-in conversion!
+            input_prompt = attack.to_string()
 
-        # Try to get from payload first
-        if 'payload' in state and isinstance(state['payload'], dict):
-            for key in prompt_key_attempts:
-                if key in state['payload'] and isinstance(state['payload'][key], str):
-                    input_prompt = state['payload'][key]
-                    print(f"  Found input prompt in state['payload']['{key}']")
-                    break
-
-        # Fallback to current_turn if not found in payload
-        if input_prompt is None and 'current_turn' in state and isinstance(state['current_turn'], dict):
-            turn_data = state['current_turn']
-            if 'attack' in turn_data and isinstance(turn_data['attack'], (str, dict)):
-                # If 'attack' is a dict, assume it has a 'text' or 'prompt' field
-                if isinstance(turn_data['attack'], str):
-                    input_prompt = turn_data['attack']
-                elif isinstance(turn_data['attack'], dict) and 'prompt' in turn_data['attack']:
-                    input_prompt = turn_data['attack']['prompt']
-                elif isinstance(turn_data['attack'], dict) and 'text' in turn_data['attack']:
-                    input_prompt = turn_data['attack']['text']
-                print(f"  Found input prompt in state['current_turn']['attack']")
-            elif 'defence' in turn_data and isinstance(turn_data['defence'], (str, dict)):
-                 if isinstance(turn_data['defence'], str):
-                    input_prompt = turn_data['defence']
-                 elif isinstance(turn_data['defence'], dict) and 'prompt' in turn_data['defence']:
-                    input_prompt = turn_data['defence']['prompt']
-                 elif isinstance(turn_data['defence'], dict) and 'text' in turn_data['defence']:
-                    input_prompt = turn_data['defence']['text']
-                 print(f"  Found input prompt in state['current_turn']['defence']")
-
-        if input_prompt is None:
+        if not input_prompt:
             print("Warning: Could not find input prompt in state. Using empty string for defense.")
-            input_prompt = "" # Use empty string if no prompt is found
-
-        # Ensure input_prompt is a string for prediction
-        if not isinstance(input_prompt, str):
-            print(f"Warning: Input prompt is not a string (type: {type(input_prompt)}). Attempting conversion to string.")
-            try:
-                input_prompt = str(input_prompt)
-            except Exception as e:
-                print(f"Error converting input prompt to string: {e}")
-                return {"defence": {"error": f"Invalid input type, conversion failed: {e}"}, "node_name": self.name, "routing_signal": RoutingSignals.CONTINUE}
 
         try:
-            # Use the predict method from the loaded DefenseSystem
+            # --- 2. RUN ML PREDICTION ---
             result = self.defense_system.predict(input_prompt)
             print("✅ Defense pipeline executed successfully.")
             
-            # --- Update state with results ---
-            # The node should return a dictionary that updates specific fields in the SystemState.
-            # We're updating the 'defence' field within 'current_turn'.
+            # --- 3. CONVERT TO DOMAIN MODEL ---
+            # We must map the ML dictionary into a strict DefencePayload so the Strategies can read it
+            is_malicious = result.get("malicious", False)
+            status_code = 403 if is_malicious else 200
+            
+            # Provide a generic text response, and stuff all the juicy ML data into the metadata
+            response_text = "Request denied by AI Defense System." if is_malicious else "Request processed successfully."
+            
+            from engine.domain_models import create_defence_response
+            defence_payload = create_defence_response(
+                text=response_text,
+                status_code=status_code,
+                headers={"x-decision-source": str(result.get("decision_source", "unknown"))},
+                **result # Unpack the entire ML result dictionary into the metadata!
+            )
+            
+            # --- 4. RETURN CLEAN DELTAS ---
             return {
-                "current_turn": TurnData(
-                    defence=result, # The full result of the defense system
-                    node_name=self.name, # Record which node executed
-                    timestamp=datetime.utcnow().isoformat() # Update timestamp
-                ),
-                "routing_signal": RoutingSignals.CONTINUE # Continue to the next node in the graph
+                "current_turn": {
+                    "defence": defence_payload,
+                    "node_name": self.name
+                }
             }
 
         except Exception as e:
             print(f"❌ Error during defense system prediction for node {self.name}: {e}")
-            return {"defence": {"error": f"Defense system failed: {e}"}, "node_name": self.name, "routing_signal": RoutingSignals.CONTINUE}
+            from engine.domain_models import create_defence_response
+            error_defence = create_defence_response(f"Defense system failed: {e}", status_code=500)
+            return {"current_turn": {"defence": error_defence, "node_name": self.name}}
 
     @classmethod
     def get_node_schema(cls) -> Dict[str, Any]:
