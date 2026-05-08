@@ -118,8 +118,11 @@ class DefaultDefenceNode(BaseAdversarialNode):
         
         tracer("DefaultDefenceNode.execute", base_rate=self.base_block_rate, final_rate=final_block_rate)
         
-        current_turn = state.get("current_turn", {})
-        attack_text = current_turn.get("attack").text.lower() if current_turn.get("attack") else ""
+        if "current_turn" not in state: raise ValueError("Corrupted state: Missing 'current_turn'.")
+        current_turn = state["current_turn"]
+        attack = current_turn["attack"] if "attack" in current_turn else None
+        
+        attack_text = attack.to_string().lower() if attack else ""
             
         # Heuristic Logic
         trigger_words = ["bypass", "ignore", "secret", "evil", "illegal"]
@@ -194,8 +197,11 @@ class DefaultEvalNode(BaseAdversarialNode):
         
         tracer("DefaultEvalNode.execute", active_strictness=active_strictness)
         
-        current_turn = state.get("current_turn", {})
-        defence = current_turn.get("defence")
+        if "current_turn" not in state: raise ValueError("Corrupted state: Missing 'current_turn'.")
+        current_turn = state["current_turn"]
+        defence = current_turn["defence"] if "defence" in current_turn else None
+        
+        # Domain Model specific method!
         was_blocked = defence.was_blocked() if defence else False
         
         if was_blocked:
