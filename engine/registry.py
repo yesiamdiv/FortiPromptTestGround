@@ -5,8 +5,8 @@ Registry for Nodes and Strategies
 from typing import Dict, Any, Callable, Type
 
 # Import base classes and specific node/strategy implementations
-from nodes.base import BaseAdversarialNode, StrategyProxyNode
-from nodes.default_nodes import create_default_nodes # Factory for default nodes
+from nodes.base import BaseAdversarialNode
+from nodes.default_nodes import DefaultAttackNode, DefaultDefenceNode, DefaultEvalNode
 from nodes.multilayer_defense_node import MultilayerDefenseNode
 from nodes.strategy_attack_node import StrategyDrivenAttackNode
 from nodes.ensemble_defence_node import EnsembleDefenceNode
@@ -101,20 +101,22 @@ def register_all_components():
     """
     tracer("register_all_components")
     
-    default_nodes_instance = create_default_nodes()
-    _node_registry.register("default_attack", lambda **k: default_nodes_instance["attack"])
-    _node_registry.register("default_defense", lambda **k: default_nodes_instance["defence"])
-    _node_registry.register("default_eval", lambda **k: default_nodes_instance["eval"])
+    # 1. Direct Registration (No lambda wrappers, no factory functions!)
+    _node_registry.register("default_attack", DefaultAttackNode)
+    _node_registry.register("default_defense", DefaultDefenceNode)
+    _node_registry.register("default_eval", DefaultEvalNode)
     step("Registered default nodes", nodes=["default_attack", "default_defense", "default_eval"])
     
-    _node_registry.register("router", lambda **k: RouterNode(**k))
-    _node_registry.register("strategy_attack", lambda **k: StrategyDrivenAttackNode(**k))
-    _node_registry.register("ensemble_defense", lambda **k: EnsembleDefenceNode(**k))
-    _node_registry.register("server_eval", lambda **k: ServerEvalNode(**k))
-    _node_registry.register("llm_eval", lambda **k: LLMEvalNode(**k))
-    _node_registry.register("multilayer_defense", lambda **k: MultilayerDefenseNode(**k))
+    # 2. Clean Custom Nodes
+    _node_registry.register("router", RouterNode)
+    _node_registry.register("strategy_attack", StrategyDrivenAttackNode)
+    _node_registry.register("ensemble_defense", EnsembleDefenceNode)
+    _node_registry.register("server_eval", ServerEvalNode)
+    _node_registry.register("llm_eval", LLMEvalNode)
+    _node_registry.register("multilayer_defense", MultilayerDefenseNode)
     step("Registered custom nodes", nodes=["router", "strategy_attack", "ensemble_defense", "server_eval", "llm_eval", "multilayer_defense"])
 
+    # 3. Strategies were already doing it perfectly!
     _strategy_registry.register("default", DefaultStrategy)
     _strategy_registry.register("iterative_improvement", IterativeImprovementStrategy)
     _strategy_registry.register("manual", ManualStrategy)

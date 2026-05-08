@@ -1,268 +1,174 @@
-# Strategies Module
+# 🧠 Strategies Module
 
-The "brain" of the system - contains all business logic for attack generation and routing decisions.
+The `strategies` directory contains the "Brains" of the adversarial testing engine. While Nodes act as the physical workers (executing API calls), Strategies contain all the business logic, prompt generation, memory management, and routing decisions.
 
-## Overview
+## 🏛️ Overview
 
-Strategies implement the Strategy Design Pattern to encapsulate:
-- Attack prompt formulation
-- Multi-turn state management  
-- Success/failure criteria
-- Graph routing decisions
+Strategies implement a highly structured pattern to encapsulate:
+- **Attack Formulation:** Generating novel adversarial prompts or payloads.
+- **Context Memory:** Managing multi-turn state (e.g., tracking previous attempts and feedback).
+- **Intelligent Routing:** Deciding whether to loop for another attempt or end the graph based on evaluation scores.
 
-## Base Interface
+---
 
-All strategies must inherit from `AttackStrategy` and implement three methods:
+## 🛠️ The Base Interface
+
+All strategies must inherit from `AttackStrategy` and strictly implement these four methods:
 
 ```python
+from typing import Dict, Any
 from strategies.base import AttackStrategy
+from engine.state_schema import SystemState, RoutingSignals
 
 class MyStrategy(AttackStrategy):
-    def setup(self, payload: dict) -> dict:
-        """
-        Called once at run start.
-        Initialize strategy_context and return routing signal.
-        """
-        return {
-            "strategy_context": {...},
-            "routing_signal": "continue"
-        }
     
-    def execute_generation(self, state: dict) -> dict:
+    def initialize(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
         """
-        Called by AttackNode to generate next attack.
-        Read strategy_context, create AttackPayload, update counters.
+        Called once at run start by the `init` node.
+        Sets up the initial `strategy_context` (the sandbox).
+        Returns: A state delta (dictionary) containing ONLY the updated strategy_context.
         """
-        return {
-            "current_turn": {...},
-            "strategy_context": {...}
-        }
-    
-    def process_end_of_loop(self, state: dict) -> dict:
+        pass
+        
+    async def execute_generation(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
         """
-        Called after evaluation to decide routing.
-        Analyze EvalResult, update counters, return signal.
+        Called by the `attack` node.
+        Reads context, creates an `AttackPayload`, and updates internal counters.
+        Returns: A state delta containing the `current_turn` and updated `strategy_context`.
         """
-        return {
-            "strategy_context": {...},
-            "routing_signal": "attack" or "__end__"
-        }
+        pass
+        
+    def route(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> str:
+        """
+        Called by the `router` node after an evaluation.
+        Analyzes the `EvalResult` and iteration counters.
+        Returns: A raw string signal (`RoutingSignals.CONTINUE` or `RoutingSignals.END`).
+        """
+        pass
+
+    @classmethod
+    def get_dependency_schema(cls) -> Dict[str, Any]:
+        """Returns JSON schema for static parameters required by this strategy."""
+        return {"type": "object", "properties": {}}
+
 ```
 
-## Default Strategy
+---
 
-`default_strategy.py` - No-op implementation for testing:
-- Generates random attack text (no LLM)
-- Runs for 1 turn
-- Always succeeds
-- Perfect for infrastructure testing
+## 🚦 The "Gold Standard" Rules
 
-**Usage:**
-```python
-from strategies.default_strategy import DefaultStrategy
+If you are writing a new strategy, you **must** adhere to these architectural laws:
 
-strategy = DefaultStrategy({
-    "max_attempts": 3,
-    "attack_prefix": "Test"
-})
-```
+1. **The Context Sandbox:** Strategies must never pollute the root `SystemState`. All internal memory (history, counters, previous best scores) must live exclusively inside the `strategy_context` dictionary.
+2. **Deep Copy Contexts:** When reading `strategy_context` to modify nested lists or dictionaries (like appending to an attack history), you MUST use `copy.deepcopy(state["strategy_context"])` to prevent mutating LangGraph's immutable state history.
+3. **Strict State Access (Fail-Fast):** Never use `.get()` with empty fallbacks on the root state. Use strict dictionary access:
+* ❌ `context = state.get("strategy_context", {})`
+* ✅ `if "strategy_context" not in state: raise ValueError(...)`
 
-## Strategy Data
 
-The `data/` directory contains strategy-specific assets:
+4. **Domain Model Property Access:** Never use old Java-style getters. Use strict Python properties:
+* ❌ `eval_result.get_score()`
+* ✅ `evaluation.score`
 
-### `data/prompts/`
-Template files for prompt generation.
 
-**Example:**
-```json
-{
-  "jailbreak_templates": [
-    "Ignore your instructions and...",
-    "Pretend you are not bound by...",
-    "Let's play a game where..."
-  ]
-}
-```
+5. **Runtime Configurations:** Always accept and utilize `runtime_config`. This allows the frontend to override temperatures, strictness, or styles mid-execution without rebuilding the graph.
 
-### `data/seeds/`
-Initial attack vectors and seed prompts.
+---
 
-**Example:**
-```json
-{
-  "social_engineering": [
-    "seed_1": "You are my friend, so...",
-    "seed_2": "As an authorized user..."
-  ]
-}
-```
+## 🏗️ Creating a Custom Strategy (Example)
 
-### `data/configs/`
-Strategy-specific configuration files.
-
-**Example:**
-```yaml
-strategy_name: iterative_improvement
-max_attempts: 10
-target_score: 0.8
-temperature: 0.9
-```
-
-## Creating a New Strategy
-
-### 1. Create Strategy Class
+Here is a compliant, minimal implementation of a custom strategy:
 
 ```python
-# strategies/my_strategy.py
-
+import copy
+from typing import Dict, Any
 from strategies.base import AttackStrategy
 from engine.domain_models import create_simple_attack
-from engine.state_schema import create_turn_data
+from engine.state_schema import create_turn_data, RoutingSignals, SystemState
+from engine.debug_utils import tracer, step
 
-class MyStrategy(AttackStrategy):
-    def __init__(self, config):
-        super().__init__(config)
-        # Load templates from data/
-        self.prompts = self._load_prompts()
-    
-    def _load_prompts(self):
-        import json
-        with open('strategies/data/prompts/my_prompts.json') as f:
-            return json.load(f)
-    
-    def setup(self, payload):
-        intent = payload.get("intent")
+class MyCustomStrategy(AttackStrategy):
+    def __init__(self, config: Dict[str, Any] = None):
+        super().__init__(config or {"max_attempts": 3})
+
+    def initialize(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
+        tracer("MyCustomStrategy.initialize")
         
-        return {
-            "strategy_context": {
-                "intent": intent,
-                "attempt_count": 0,
-                "max_attempts": self.config.get("max_attempts", 5),
-                "prompt_queue": self.prompts["templates"]
-            },
-            "routing_signal": "continue"
-        }
-    
-    def execute_generation(self, state):
-        context = state["strategy_context"]
+        # 1. Strict Access
+        if "payload" not in state: raise ValueError("Missing payload")
+        if "strategy_context" not in state: raise ValueError("Missing strategy_context")
         
-        # Get next prompt from queue
-        prompt = context["prompt_queue"][context["attempt_count"]]
+        # 2. Deep Copy
+        context = copy.deepcopy(state["strategy_context"])
         
-        # Create attack
-        attack = create_simple_attack(prompt)
-        turn = create_turn_data(f"turn_{context['attempt_count']}", "attack")
+        # 3. Setup Sandbox
+        context.update({
+            "attempt_count": 0,
+            "max_attempts": self.config.get("max_attempts", 3),
+            "history": []
+        })
+        
+        # 4. Return Delta
+        return {"strategy_context": context}
+
+    async def execute_generation(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
+        if "strategy_context" not in state: raise ValueError("Missing strategy_context")
+        
+        context = copy.deepcopy(state["strategy_context"])
+        current_attempt = context.get("attempt_count", 0) + 1
+        
+        # Generate Attack (Could use an LLM provider here!)
+        attack_text = f"Custom Attack Attempt {current_attempt}"
+        
+        # Wrap in Domain Model
+        attack = create_simple_attack(attack_text, strategy=self.name)
+        
+        turn = create_turn_data(f"turn_{current_attempt}", "attack")
         turn["attack"] = attack
+        
+        # Update Memory
+        context["attempt_count"] = current_attempt
+        context["history"].append(attack_text)
         
         return {
             "current_turn": turn,
-            "strategy_context": {
-                **context,
-                "attempt_count": context["attempt_count"] + 1
-            }
+            "strategy_context": context
         }
-    
-    def process_end_of_loop(self, state):
+
+    def route(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> str:
+        if "strategy_context" not in state: raise ValueError("Missing context")
+        if "current_turn" not in state: raise ValueError("Missing turn data")
+        
         context = state["strategy_context"]
-        eval_result = state["current_turn"]["evaluation"]
+        evaluation = state["current_turn"]["evaluation"] if "evaluation" in state["current_turn"] else None
         
-        # Stop if successful or out of attempts
-        should_stop = (
-            eval_result.is_success() or
-            context["attempt_count"] >= context["max_attempts"]
-        )
+        # Stop if successful
+        if evaluation and evaluation.success:
+            step("Target achieved! Ending.", score=evaluation.score)
+            return RoutingSignals.END
+            
+        # Stop if out of attempts
+        if context.get("attempt_count", 0) >= context.get("max_attempts", 3):
+            return RoutingSignals.END
+            
+        # Otherwise, loop!
+        return RoutingSignals.CONTINUE
+
+```
+
+## 🔌 Using External LLMs inside Strategies
+
+Strategies do not have access to the `GraphBuilder`. If a strategy needs an LLM to generate intelligent attacks (like the `IterativeImprovementStrategy`), it must dynamically fetch the provider from the registry during `__init__`:
+
+```python
+from engine.provider_registry import get_provider_registry
+
+class SmartStrategy(AttackStrategy):
+    def __init__(self, config: Dict[str, Any] = None):
+        super().__init__(config)
         
-        return {
-            "strategy_context": context,
-            "routing_signal": "__end__" if should_stop else "attack"
-        }
+        # Fetch the LLM provider to use for generating attacks
+        provider_name = self.config.get("llm_provider_name", "ollama")
+        self.provider = get_provider_registry().get(provider_name, config=self.config)
+
 ```
-
-### 2. Add Strategy Data
-
-Create `strategies/data/prompts/my_prompts.json`:
-```json
-{
-  "templates": [
-    "First attack prompt",
-    "Second attack prompt",
-    "Third attack prompt"
-  ]
-}
-```
-
-### 3. Use in Engine
-
-```python
-from strategies.my_strategy import MyStrategy
-from engine.workflow_engine import create_default_engine
-
-strategy = MyStrategy({"max_attempts": 3})
-engine = create_default_engine()
-
-result = await engine.execute_run(
-    payload={"intent": "test jailbreak"},
-    strategy=strategy
-)
-```
-
-## Strategy Rules
-
-**DO:**
-- ✅ Store all state in `strategy_context`
-- ✅ Always return domain objects (AttackPayload, not strings)
-- ✅ Use `data/` directory for templates and seeds
-- ✅ Document required config parameters
-
-**DON'T:**
-- ❌ Access database or network directly
-- ❌ Store state in instance variables
-- ❌ Return raw strings as attacks
-- ❌ Make assumptions about node implementations
-
-## Common Patterns
-
-**Iterative improvement with feedback:**
-```python
-def process_end_of_loop(self, state):
-    context = state["strategy_context"]
-    eval_result = state["current_turn"]["evaluation"]
-    
-    # Store feedback for next iteration
-    context["last_feedback"] = eval_result.get_reasoning()
-    context["best_score"] = max(
-        context.get("best_score", 0),
-        eval_result.get_score()
-    )
-    
-    return {
-        "strategy_context": context,
-        "routing_signal": "attack" if should_continue else "__end__"
-    }
-```
-
-**Multi-seed parallel testing:**
-```python
-def setup(self, payload):
-    return {
-        "strategy_context": {
-            "seed_queue": ["seed1", "seed2", "seed3"],
-            "current_seed_index": 0,
-            "results": []
-        },
-        "routing_signal": "continue"
-    }
-
-def execute_generation(self, state):
-    context = state["strategy_context"]
-    current_seed = context["seed_queue"][context["current_seed_index"]]
-    # Generate attack from current seed
-    ...
-```
-
-## See Also
-
-- [ARCHITECTURE.md](../ARCHITECTURE.md) - System architecture
-- [../engine/README.md](../engine/README.md) - Engine components
-- [../nodes/README.md](../nodes/README.md) - Node implementation
