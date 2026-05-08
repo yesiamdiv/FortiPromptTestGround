@@ -1,7 +1,34 @@
 """
-Run Manager - Refactored for Middleware Factory Pattern and Correct Config Flow
-"""
+class RunExecutor:
+    \"\"\"
+    Manages the lifecycle and execution of a single independent run.
 
+    The RunExecutor acts as the state machine for a specific execution request. It binds 
+    the WorkflowEngine to a specific `run_id`, manages the asynchronous `asyncio.Task` 
+    responsible for the execution, handles graceful cancellations (stopping), and ensures 
+    the database accurately reflects the current status (IDLE, RUNNING, COMPLETED, FAILED, STOPPED).
+
+    Attributes:
+        run_id (str): The unique identifier for this execution.
+        graph_config (GraphConfig): The configuration payload driving this execution.
+        engine (WorkflowEngine): The engine instance executing this specific run.
+        status (RunStatus): The current execution state of the run.
+        task (Optional[asyncio.Task]): The background task executing the run, allowing for cancellation.
+    \"\"\"
+
+class RunManager:
+    \"\"\"
+    Global singleton manager that oversees all active run executions in the application.
+
+    The RunManager acts as the primary entry point for the API layer. It safely routes 
+    requests to create, start, stop, and monitor runs. It maintains an internal registry 
+    of active `RunExecutor` instances and uses asynchronous locks to prevent race conditions 
+    (e.g., attempting to start a run that is already processing).
+
+    Attributes:
+        executors (Dict[str, RunExecutor]): A dictionary mapping active `run_id`s to their executors.
+    \"\"\"
+"""
 import asyncio
 from typing import Dict, Any, Optional, List
 from datetime import datetime
@@ -219,34 +246,42 @@ class RunManager:
             if not run_data:
                 raise ValueError(f"Run {run_id} not found in database")
             
-            # Robustly determine current status
-            current_status_str: str
-            if isinstance(run_data, RunModel): # Check if it's a Pydantic model instance
+            # [FIXED]: Robustly determine current status and extract fields for BOTH Dicts and Models
+            if isinstance(run_data, RunModel):
                 current_status_str = run_data.status
-            elif isinstance(run_data, dict): # Check if it's a dictionary
-                current_status_str = run_data.get("status", RunStatus.IDLE.value) # Use .get for dicts
+                raw_graph_config = run_data.graph_config
+                description = getattr(run_data, "description", "")
+            elif isinstance(run_data, dict):
+                current_status_str = run_data.get("status", RunStatus.IDLE.value)
+                raw_graph_config = run_data.get("graph_config")
+                description = run_data.get("description", "")
             else:
-                # Fallback for unexpected types, though less likely
                 raise TypeError(f"Unexpected type for run_data: {type(run_data)}")
 
             if current_status_str not in [RunStatus.IDLE.value, RunStatus.STOPPED.value]:
                 raise RuntimeError(f"Cannot start run {run_id} in status: {current_status_str}")
 
+            if not raw_graph_config:
+                raise ValueError(f"Failed to find graph_config for run {run_id}")
+
             try:
-                graph_config = run_data.graph_config
+                if isinstance(raw_graph_config, dict):
+                    graph_config = GraphConfig(**raw_graph_config)
+                else:
+                    graph_config = raw_graph_config
             except Exception as e:
                 raise ValueError(f"Failed to parse graph_config for run {run_id}: {e}")
 
-            # Pass graph_config to executor. The executor will build the graph with strategy.
+            # Pass graph_config to executor
             executor = RunExecutor(
                 run_id=run_id,
                 graph_config=graph_config
             )
             self.executors[run_id] = executor
             
-            payload = input_payload if input_payload else {
-                "description": run_data.get("description", "")
-            }
+            payload = input_payload.copy() if input_payload else {}
+            if "description" not in payload:
+                payload["description"] = description
 
             executor.task = asyncio.create_task(executor.start(payload))
             step("Run execution started", run_id=run_id)

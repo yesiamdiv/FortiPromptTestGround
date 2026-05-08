@@ -1,16 +1,27 @@
 """
-Server-Based Evaluation Node
+================================================================================
+SERVER-BASED EVALUATION NODE
+================================================================================
 
-Makes HTTP requests to an external evaluation service.
+DEVELOPER INSTRUCTIONS:
+--------------------------------------------------------------------------------
+1. Standalone Logic: Makes HTTP requests to an external evaluation service. The 
+   external server handles the heavy lifting (LLMs, scoring logic).
+2. Initialization: Must strictly accept `config`. Extracts `eval_server_url` 
+   and other settings from `self.config["node_params"]`.
+3. State Deltas: Returns only state updates (the 'evaluation' object).
+4. Type Safety: Strict dictionary access for `SystemState`. No `.get()` on root.
+5. Domain Models: Uses strict property access (e.g., `defence.response_text`).
+================================================================================
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 import httpx
 from nodes.base import BaseAdversarialNode
 from engine.domain_models import create_eval_result
-from engine.state_schema import update_turn_data, SystemState
+from engine.state_schema import SystemState
 from datetime import datetime
-from engine.debug_utils import debug, tracer, step, warn, err, checkpoint
+from engine.debug_utils import debug, tracer, step, warn, err
 
 
 class ServerEvalNode(BaseAdversarialNode):
@@ -18,73 +29,97 @@ class ServerEvalNode(BaseAdversarialNode):
     Evaluation node that delegates to an external HTTP service.
     """
     
-    def __init__(
-        self,
-        eval_server_url: str,
-        api_key: Optional[str] = None,
-        headers: Optional[Dict[str, str]] = None,
-        config: Dict[str, Any] = None
-    ):
+    def __init__(self, config: Dict[str, Any] = None):
         super().__init__(config)
-        self.eval_server_url = eval_server_url.rstrip('/')
-        self.api_key = api_key
-        self.default_headers = headers or {}
+        self.node_params = self.config["node_params"] if "node_params" in self.config else {}
+        
+        self.eval_server_url = self.node_params["eval_server_url"].rstrip('/') if "eval_server_url" in self.node_params else ""
+        self.api_key = self.node_params.get("api_key")
+        self.default_headers = self.node_params.get("headers", {})
+        self.endpoint = self.node_params.get("endpoint", "/evaluate")
+        self.timeout = self.node_params.get("timeout", 30.0)
+        self.strictness = self.node_params.get("strictness", 0.5)
         
         if self.api_key:
             self.default_headers["Authorization"] = f"Bearer {self.api_key}"
+            
+        if not self.eval_server_url:
+            warn("ServerEvalNode initialized without eval_server_url in node_params.")
         
         self._client = None
     
     def _get_client(self) -> httpx.AsyncClient:
         """Get or create async HTTP client"""
         if self._client is None:
-            debug("Creating new HTTP client for eval server", timeout=self.config.get("timeout", 30.0))
+            debug("Creating new HTTP client for eval server", timeout=self.timeout)
             self._client = httpx.AsyncClient(
-                timeout=self.config.get("timeout", 30.0),
+                timeout=self.timeout,
                 follow_redirects=True
             )
         return self._client
     
     async def execute(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
-        """
-        Evaluate attack-defence interaction using external service.
-        """
-        if runtime_config is None:
-            runtime_config = {}
+        """Evaluate attack-defence interaction using external service."""
+        if runtime_config is None: runtime_config = {}
         tracer("ServerEvalNode.execute", server=self.eval_server_url)
-        current_turn = state.get("current_turn", {})
-        attack = current_turn.get("attack")
-        defence = current_turn.get("defence")
+        
+        # 1. STRICT STATE ACCESS
+        if "current_turn" not in state:
+            raise ValueError("Corrupted state: Missing 'current_turn'.")
+            
+        current_turn = state["current_turn"]
+        attack = current_turn["attack"] if "attack" in current_turn else None
+        defence = current_turn["defence"] if "defence" in current_turn else None
         
         if not attack or not defence:
-            err("Missing attack or defence payload in current_turn")
-            raise ValueError("Missing attack or defence payload in current_turn")
+            raise ValueError("Missing attack or defence payload in current_turn for evaluation.")
+            
+        # 2. RUNTIME OVERRIDES
+        active_url = runtime_config.get("eval_server_url", self.eval_server_url).rstrip('/')
+        active_endpoint = runtime_config.get("endpoint", self.endpoint)
+        active_strictness = runtime_config.get("strictness", self.strictness)
         
+        if not active_url:
+            raise ValueError("No evaluation server URL provided.")
+            
+        full_url = f"{active_url}{active_endpoint}"
+        
+        # Safely extract run context
+        run_id = state["run_id"] if "run_id" in state else "unknown_run"
+        payload = state["payload"] if "payload" in state else {}
+        intent = payload["intent"] if "intent" in payload else "unknown_intent"
+        turn_id = current_turn["turn_id"] if "turn_id" in current_turn else "unknown_turn"
+        
+        # 3. BUILD AGNOSTIC PAYLOAD WITH STRICT DOMAIN MODEL ACCESS
         eval_request = {
             "attack": {
                 "prompt": attack.to_string(),
                 "metadata": attack.metadata
             },
             "defence": {
-                "response": defence.get_text(),
+                "response": defence.response_text, # STRICT: Replaced defence.get_text()
                 "status_code": defence.status_code,
                 "was_blocked": defence.was_blocked(),
                 "metadata": defence.metadata
             },
             "run_context": {
-                "run_id": state.get("run_id"),
-                "turn_id": current_turn.get("turn_id"),
-                "intent": state.get("payload", {}).get("intent")
+                "run_id": run_id,
+                "turn_id": turn_id,
+                "intent": intent
             }
         }
-        debug("Sending evaluation request", url=self.eval_server_url)
+        
+        debug("Sending evaluation request", url=full_url)
+        
+        # Merge headers
+        headers = {**self.default_headers}
+        if "headers" in runtime_config:
+            headers.update(runtime_config["headers"])
         
         try:
             client = self._get_client()
-            endpoint = self.config.get("endpoint", "/evaluate")
-            url = f"{self.eval_server_url}{endpoint}"
             
-            response = await client.post(url, json=eval_request)
+            response = await client.post(full_url, json=eval_request, headers=headers)
             response.raise_for_status()
             
             eval_data = response.json()
@@ -93,7 +128,8 @@ class ServerEvalNode(BaseAdversarialNode):
             adjusted_score = self._adjust_score(
                 eval_data.get("score", 0.0),
                 eval_data.get("success", False),
-                defence.was_blocked()
+                defence.was_blocked(),
+                active_strictness
             )
             
             eval_result = create_eval_result(
@@ -102,7 +138,7 @@ class ServerEvalNode(BaseAdversarialNode):
                 category=eval_data.get("category", "unknown"),
                 reasoning=eval_data.get("reasoning", ""),
                 evaluator_model="external_server",
-                server_url=url,
+                server_url=full_url,
                 response_time_ms=(response.elapsed.total_seconds() * 1000)
             )
             step("Evaluation complete", score=adjusted_score)
@@ -114,7 +150,7 @@ class ServerEvalNode(BaseAdversarialNode):
                 success=False,
                 category="evaluation_timeout",
                 reasoning="Evaluation service timed out",
-                evaluator="fallback",
+                evaluator_model="fallback",
                 error="timeout"
             )
             
@@ -125,7 +161,7 @@ class ServerEvalNode(BaseAdversarialNode):
                 success=False,
                 category="evaluation_error",
                 reasoning=f"Evaluation service returned {e.response.status_code}",
-                evaluator="fallback",
+                evaluator_model="fallback",
                 error=str(e)
             )
             
@@ -136,24 +172,23 @@ class ServerEvalNode(BaseAdversarialNode):
                 success=False,
                 category="evaluation_failed",
                 reasoning=f"Evaluation failed: {str(e)}",
-                evaluator="fallback",
+                evaluator_model="fallback",
                 error=str(e)
             )
         
-        updated_turn = update_turn_data(
-            current_turn,
-            evaluation=eval_result,
-            node_name="eval"
-        )
-        
-        return {"current_turn": updated_turn}
+        # 4. RETURN CLEAN DELTA
+        return {
+            "current_turn": {
+                "evaluation": eval_result,
+                "node_name": getattr(self, "name", "server_eval")
+            }
+        }
     
-    def _adjust_score(self, score: float, success: bool, was_blocked: bool) -> float:
+    def _adjust_score(self, score: float, success: bool, was_blocked: bool, strictness: float) -> float:
         """Adjust score based on strictness and defence status."""
-        tracer("_adjust_score", raw_score=score)
+        tracer("_adjust_score", raw_score=score, strictness=strictness)
         adjusted = score
         
-        strictness = self.config.get("strictness", 0.5)
         if strictness > 0.5:
             if success:
                 adjusted = adjusted * (1 + (strictness - 0.5))
@@ -173,6 +208,13 @@ class ServerEvalNode(BaseAdversarialNode):
         final_score = max(0.0, min(1.0, adjusted))
         step("Score adjusted", raw=score, adjusted=final_score)
         return final_score
+
+    async def cleanup(self):
+        """Close the HTTP client"""
+        if self._client:
+            debug("Closing eval server HTTP client")
+            await self._client.aclose()
+            self._client = None
 
     @classmethod
     def get_node_schema(cls) -> Dict[str, Any]:
@@ -203,7 +245,6 @@ class ServerEvalNode(BaseAdversarialNode):
                     "description": "Evaluation strictness level (0-1)",
                     "default": 0.5
                 }
-            }
+            },
+            "required": ["eval_server_url"]
         }
-
-

@@ -54,9 +54,7 @@ class DefencePayload:
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.utcnow)
     
-    def get_text(self) -> str:
-        return self.response_text
-    
+    # Kept this because it contains actual logic/computation
     def was_blocked(self) -> bool:
         if self.status_code >= 400:
             return True
@@ -84,18 +82,6 @@ class EvalResult:
     reasoning: str
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.utcnow)
-    
-    def is_success(self) -> bool:
-        return self.success
-    
-    def get_score(self) -> float:
-        return self.score
-    
-    def get_category(self) -> str:
-        return self.category
-    
-    def get_reasoning(self) -> str:
-        return self.reasoning
     
     def to_dict(self) -> Dict[str, Any]:
         return {

@@ -2,15 +2,18 @@
 
 from typing import TypedDict, Optional, Dict, Any
 from datetime import datetime
+import copy
 from engine.debug_utils import debug
 
+# Import our strict Domain Models!
+from engine.domain_models import AttackPayload, DefencePayload, EvalResult
 
 class TurnData(TypedDict, total=False):
     """Transient data for the current execution loop"""
     turn_id: str
-    attack: Optional[Any]  # AttackPayload
-    defence: Optional[Any]  # DefencePayload  
-    evaluation: Optional[Any]  # EvalResult
+    attack: Optional[AttackPayload]    # Replaced Any with AttackPayload
+    defence: Optional[DefencePayload]  # Replaced Any with DefencePayload
+    evaluation: Optional[EvalResult]   # Replaced Any with EvalResult
     timestamp: str
     node_name: Optional[str]
 
@@ -38,8 +41,8 @@ def create_initial_state(run_id: str, payload: Dict[str, Any], config: Dict[str,
     debug("Creating initial state", run_id=run_id, payload_keys=list(payload.keys()))
     return SystemState(
         run_id=run_id,
-        payload=payload,
-        config=config,
+        payload=copy.deepcopy(payload), # Deep copy to prevent mutation
+        config=copy.deepcopy(config),   # Deep copy to prevent mutation
         start_time=datetime.utcnow().isoformat(),
         current_turn=TurnData(
             turn_id="init",
@@ -67,8 +70,9 @@ def create_turn_data(turn_id: str, node_name: str) -> TurnData:
 
 
 def update_turn_data(current: TurnData, **updates) -> TurnData:
-    """Update specific fields in TurnData"""
-    updated = current.copy()
+    """Update specific fields in TurnData securely"""
+    # DEEPCOPY FIX: Prevents mutating nested lists/dicts inside the state
+    updated = copy.deepcopy(current)
     updated.update(updates)
     updated["timestamp"] = datetime.utcnow().isoformat()
     return updated
