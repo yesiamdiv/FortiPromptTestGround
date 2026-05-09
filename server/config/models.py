@@ -13,15 +13,15 @@ class BaseNodeConfig(BaseModel):
 
 # Specific Node Configuration Models
 class AttackNodeConfig(BaseNodeConfig):
-    node_type: Literal["llm_attack", "heuristic_attack", "manual_attack", "default_attack"] = Field(..., description="Type of attack node")
+    node_type: str = Field(..., description="Type of attack node")
     node_params: Dict[str, Any] = Field(default_factory=dict, description="Node-specific parameters for this attack node")
 
 class DefenseNodeConfig(BaseNodeConfig):
-    node_type: Literal["llm_defense", "heuristic_defense", "default_defense"] = Field(..., description="Type of defense node")
+    node_type: str = Field(..., description="Type of defense node")
     node_params: Dict[str, Any] = Field(default_factory=dict, description="Node-specific parameters for this defense node")
 
 class EvaluationNodeConfig(BaseNodeConfig):
-    node_type: Literal["llm_eval", "heuristic_eval", "default_eval"] = Field(..., description="Type of evaluation node")
+    node_type: str = Field(..., description="Type of evaluation node")
     node_params: Dict[str, Any] = Field(default_factory=dict, description="Node-specific parameters for this evaluation node")
 
 # Model for Strategy Configuration
