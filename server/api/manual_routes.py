@@ -9,7 +9,7 @@ from datetime import datetime
 
 from server.api.schemas import (
     CreateManualSessionRequest, ManualSessionResponse, SubmitManualTurnRequest,
-    ManualTurnResponse, ManualTurnHistoryResponse, RunResponse
+    ManualTurnResponse, ManualTurnHistoryResponse, RunResponse, SubmitManualTurnResponse
 )
 from server.run_manager import get_run_manager, RunManager, RunStatus
 from server.database.connection import get_db
@@ -79,7 +79,7 @@ async def create_manual_session(
         err(f"Failed to create manual session: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create manual session: {str(e)}")
 
-@router.post("/runs/{run_id}/sessions/{session_id}/manual_turn", response_model=RunResponse)
+@router.post("/runs/{run_id}/sessions/{session_id}/manual_turn", response_model=SubmitManualTurnResponse)
 async def submit_manual_turn(
     run_id: str,
     session_id: str,
@@ -109,7 +109,15 @@ async def submit_manual_turn(
         # Resume the run with the new manual input
         run_response = await run_manager.start_run(run_id, input_payload=payload)
         step("Manual turn submitted", run_id=run_id)
-        return RunResponse(**run_response)
+        # Fetch the latest turn_id from the session
+        last_turn = await db_ops.get_last_manual_turn_for_session(session_id)
+        turn_id = last_turn.turn_id if last_turn else run_response.get("turn_id", "unknown")
+        return SubmitManualTurnResponse(
+            run_id=run_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            status=run_response.get("status", "running")
+        )
     except HTTPException as e:
         raise e
     except Exception as e:
@@ -163,15 +171,15 @@ async def get_manual_turn_history(
             attack_data = None
             # Use the correct fields from ManualTurn model for data retrieval
             if turn.attack_data_id:
-                attack_data = await db_ops.get_attack(turn.attack_data_id) # Assuming get_attack exists and fetches by ID
+                attack_data = await db_ops.get_attack_by_id(turn.attack_data_id)
             
             defence_data = None
             if turn.defence_data_id:
-                defence_data = await db_ops.get_defence(turn.defence_data_id) # Assuming get_defence exists and fetches by ID
+                defence_data = await db_ops.get_defence_by_id(turn.defence_data_id)
             
             evaluation_data = None
             if turn.evaluation_data_id:
-                evaluation_data = await db_ops.get_evaluation(turn.evaluation_data_id) # Assuming get_evaluation exists and fetches by ID
+                evaluation_data = await db_ops.get_evaluation_by_id(turn.evaluation_data_id)
 
             detailed_turns.append(ManualTurnResponse(
                 **turn.dict(),
@@ -188,3 +196,46 @@ async def get_manual_turn_history(
         err(f"Failed to get manual turn history: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get manual turn history: {str(e)}")
 
+
+
+@router.get("/runs/{run_id}/sessions")
+async def list_manual_sessions(
+    run_id: str,
+    db_ops: Any = Depends(_get_db_ops_dependency)
+):
+    """List all manual sessions for a run."""
+    tracer("Listing manual sessions", run_id=run_id)
+    try:
+        run = await db_ops.get_run(run_id)
+        if not run:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run {run_id} not found.")
+        sessions = await db_ops.list_manual_sessions(run_id)
+        return {"sessions": [s.dict() for s in sessions]}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        err(f"Failed to list manual sessions: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@router.delete("/runs/{run_id}/sessions/{session_id}")
+async def delete_manual_session(
+    run_id: str,
+    session_id: str,
+    db_ops: Any = Depends(_get_db_ops_dependency)
+):
+    """Delete a manual session and its turns."""
+    tracer("Deleting manual session", run_id=run_id, session_id=session_id)
+    try:
+        session = await db_ops.get_manual_session(session_id)
+        if not session or session.run_id != run_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found.")
+        await db_ops.manual_sessions.delete_one({"session_id": session_id, "run_id": run_id})
+        await db_ops.manual_turns.delete_many({"session_id": session_id})
+        step("Manual session deleted", session_id=session_id)
+        return {"message": f"Session {session_id} deleted successfully"}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        err(f"Failed to delete manual session: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))

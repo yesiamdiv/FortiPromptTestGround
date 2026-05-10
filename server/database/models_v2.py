@@ -113,6 +113,10 @@ class RunModel(BaseModel):
     started_at: Optional[str] = Field(None, description="ISO timestamp when the run execution began")
     completed_at: Optional[str] = Field(None, description="ISO timestamp when the run execution finished")
     
+    # Additional fields expected by the frontend
+    updated_at: Optional[str] = Field(None, description="ISO timestamp when the run was last updated")
+    components: List[str] = Field(default_factory=list, description="Derived list of component types from graph_config")
+
     # Aggregated statistics (computed from related data)
     total_iterations: int = Field(default=0, description="Total number of attack iterations performed")
     successful_iterations: int = Field(default=0, description="Count of iterations that were successful based on evaluation")

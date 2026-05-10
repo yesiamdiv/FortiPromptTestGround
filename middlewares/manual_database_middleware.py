@@ -9,7 +9,7 @@ CHANGES FROM ORIGINAL:
 """
 
 from typing import Dict, Any, Optional
-from middlewares.base_refactored import BaseMiddleware
+from middlewares.base import BaseMiddleware
 from server.database.connection import get_db
 from server.database.operations import get_db_ops
 from engine.debug_utils import debug, tracer, step, warn, err
@@ -159,12 +159,13 @@ class ManualDatabaseMiddleware(BaseMiddleware):
             best_score = context.get("best_score")
             session_id = state.get("session_id")
             
+            # 5-B1: Read session_id from state - get_session_id_for_run() does not exist
             if not session_id:
-                err("Missing session_id in final_state", run_id=run_id)
-                session_id = await db_ops.get_session_id_for_run(run_id)
-                if not session_id:
-                    err("Could not retrieve session_id for run", run_id=run_id)
-                    return
+                session_id = context.get("session_id")
+            if not session_id:
+                err("Cannot find session_id in final_state or strategy_context", run_id=run_id)
+                await db_ops.update_run(run_id, {"status": "idle"})
+                return
             
             await db_ops.update_manual_session_state(
                 session_id=session_id,

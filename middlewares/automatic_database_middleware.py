@@ -10,7 +10,7 @@ CHANGES FROM ORIGINAL:
 """
 
 from typing import Dict, Any, Optional
-from middlewares.base_refactored import BaseMiddleware
+from middlewares.base import BaseMiddleware
 from server.database.connection import get_db
 from server.database.operations import get_db_ops
 from engine.debug_utils import debug, tracer, step, warn, err
@@ -59,6 +59,12 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
             
             debug("Automatic run starting", strategy=strategy_name, intent=intent)
             
+            # 2-B5: Persist started_at when run begins
+            db_ops = get_db_ops(db)
+            from datetime import datetime
+            _now = datetime.utcnow().isoformat()
+            await db_ops.update_run(run_id, {"started_at": _now, "updated_at": _now})
+            
         except Exception as e:
             err("Error in before_run", error=str(e))
     
@@ -82,7 +88,8 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
             # Extract iteration context
             context = state.get("strategy_context", {})
             iteration = context.get("iteration_count", 0) 
-            turn_id = context.get("turn_id", f"turn_{iteration}")
+            # 5-B4: turn_id lives in current_turn, not strategy_context
+            turn_id = state.get("current_turn", {}).get("turn_id") or context.get("turn_id", f"turn_{iteration}")
             
             # Route based on node name
             if node_name == "attack" and self.middleware_config.get("save_attacks"):
@@ -93,6 +100,14 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
             
             elif node_name == "eval" and self.middleware_config.get("save_evaluations"):
                 await self._save_evaluation(db_ops, run_id, iteration, state, turn_id)
+                # 5-B5: Increment iteration counters
+                current_turn = state.get("current_turn", {})
+                eval_obj = current_turn.get("evaluation")
+                success = eval_obj.success if eval_obj and hasattr(eval_obj, "success") else False
+                inc_update = {"$inc": {"total_iterations": 1}}
+                if success:
+                    inc_update["$inc"]["successful_iterations"] = 1
+                await db_ops.runs.update_one({"run_id": run_id}, inc_update)
             
         except Exception as e:
             err("Error in after_step", error=str(e), node=node_name)
@@ -304,7 +319,8 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
             
 #             context = node_output.get("strategy_context", {})
 #             iteration = context.get("iteration_count", 0) 
-#             turn_id = context.get("turn_id", f"turn_{iteration}")
+#             # 5-B4: turn_id lives in current_turn, not strategy_context
+            # turn_id = state.get("current_turn", {}).get("turn_id") or context.get("turn_id", f"turn_{iteration}")
 
 #             if node_name == "attack" and self.config.get("save_attacks"):
 #                 await self._save_attack(db_ops, run_id, iteration, node_output, turn_id)

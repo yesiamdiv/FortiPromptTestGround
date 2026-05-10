@@ -18,7 +18,7 @@ from typing import Dict, Any, List, Optional
 import asyncio
 import uuid
 from datetime import datetime
-from middlewares.base_refactored import BaseMiddleware
+from middlewares.base import BaseMiddleware
 from engine.state_schema import SystemState, create_initial_state, update_turn_data, RoutingSignals
 from engine.debug_utils import debug, tracer, step, checkpoint, warn, err, state
 from langgraph.graph.state import CompiledStateGraph

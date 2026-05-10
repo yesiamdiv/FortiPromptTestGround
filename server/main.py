@@ -28,61 +28,109 @@ from engine.registry import register_all_components # Use unified registration
 async def lifespan(app: FastAPI):
     """
     Application lifespan manager.
-    Handles startup and shutdown tasks, including registry initialization.
+
+    Startup order (runs before the server accepts any requests):
+      1. Registries  - register all nodes, strategies, providers
+      2. Database    - connect, ensure indexes, recover stale runs
+      3. Socket.IO   - verify singleton is alive
+      4. RunManager  - verify singleton is alive
     """
-    # === STARTUP ===
-    print("🚀 Starting Adversarial Testing Engine...")
-    
-    # 1. Initialize database
+    # =========================================================================
+    # STARTUP
+    # =========================================================================
+    print("Starting Adversarial Testing Engine...")
+
+    # 1. Component registries (must come first)
+    try:
+        register_all_components()
+        print("[OK] All components registered (nodes, strategies, providers)")
+    except Exception as e:
+        print(f"[FATAL] Component registration failed: {e}")
+        raise  # Cannot operate without registries
+
+    # 2. Database
+    db = None
     try:
         mongo_url = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
-        db_name = os.getenv("MONGODB_DB_NAME", "adversarial_testing")
-        await init_db(mongo_url, db_name)
-        print("✓ Database connected")
+        db_name   = os.getenv("MONGODB_DB_NAME", "adversarial_testing")
+        db = await init_db(mongo_url, db_name)
+        print(f"[OK] Database connected ({db_name} @ {mongo_url})")
     except Exception as e:
-        print(f"⚠ Database connection failed: {e}")
-    
-    # 2. Initialize Socket.IO
-    socketio_manager = get_socketio_manager()
-    print("✓ Socket.IO initialized")
-    
-    # 3. Initialize run manager
-    run_manager = get_run_manager()
-    print("✓ Run manager initialized")
-    
-    # 4. Initialize Registries (nodes, strategies, providers)
-    try:
-        register_all_components() # Call the unified registration function
-        print("✓ All components registered (nodes, strategies, providers)")
-    except Exception as e:
-        raise e # Re-raise for detailed traceback
+        print(f"[WARN] Database connection failed: {e}")
+        print("       Continuing startup - endpoints will return 500 individually.")
 
-    # 5. Restore existing runs (This part might need re-evaluation based on new state management)
-    # Consider re-implementing if needed, ensuring it aligns with manual/automatic distinctions.
-    # For now, skipping direct run restoration in lifespan to focus on API/Middleware setup.
-    
-    print("🎉 Server ready to accept requests!\n")
-    
-    yield # Application runs here
-    
-    # === SHUTDOWN ===
-    print("\n🛑 Shutting down Adversarial Testing Engine...")
-
-    # Stop all active runs
-    active_runs = run_manager.get_active_runs()
-    
-    for run_id in active_runs:
+    # 2a. Ensure indexes for all collections
+    if db is not None:
         try:
-            await run_manager.stop_run(run_id)
-            print(f"✓ Stopped run: {run_id}")
+            await db.attacks.create_index("run_id")
+            await db.attacks.create_index([("run_id", 1), ("index", 1)])
+            await db.defences.create_index("run_id")
+            await db.defences.create_index([("run_id", 1), ("index", 1)])
+            await db.evaluations.create_index("run_id")
+            await db.evaluations.create_index([("run_id", 1), ("score", -1)])
+            await db.manual_sessions.create_index("run_id")
+            await db.manual_sessions.create_index("session_id", unique=True)
+            await db.manual_sessions.create_index("created_at")
+            await db.manual_turns.create_index("session_id")
+            await db.manual_turns.create_index([("session_id", 1), ("index", 1)])
+            print("[OK] Database indexes ensured")
         except Exception as e:
-            print(f"⚠ Failed to stop run {run_id}: {e}")
-    
-    # Close database connection
+            print(f"[WARN] Index creation: {e}")
+
+    # 2b. Stale-run recovery - reset any run stuck in "running" from a previous crash
+    if db is not None:
+        try:
+            from server.database.operations import get_db_ops as _get_db_ops
+            from datetime import datetime as _dt
+            _db_ops = _get_db_ops(db)
+            stale_docs = await db.runs.find({"status": "running"}).to_list(length=None)
+            if stale_docs:
+                print(f"[WARN] Found {len(stale_docs)} stale running run(s) - resetting to 'idle'")
+                for doc in stale_docs:
+                    rid = doc.get("run_id", str(doc.get("_id", "unknown")))
+                    await _db_ops.update_run(rid, {
+                        "status": "idle",
+                        "updated_at": _dt.utcnow().isoformat()
+                    })
+                    print(f"       Reset stale run: {rid}")
+            else:
+                print("[OK] No stale runs found")
+        except Exception as e:
+            print(f"[WARN] Stale-run recovery failed: {e}")
+
+    # 3. Socket.IO
+    get_socketio_manager()
+    print("[OK] Socket.IO manager ready")
+
+    # 4. Run manager
+    get_run_manager()
+    print("[OK] Run manager ready")
+
+    print("Server ready!\n")
+
+    # =========================================================================
+    yield  # server runs here
+    # =========================================================================
+
+    # SHUTDOWN
+    print("\nShutting down Adversarial Testing Engine...")
+    run_manager = get_run_manager()
+    try:
+        active_run_ids = run_manager.get_active_runs()
+        if active_run_ids:
+            print(f"  Stopping {len(active_run_ids)} active run(s)...")
+            for run_id in active_run_ids:
+                try:
+                    await run_manager.stop_run(run_id)
+                    print(f"  Stopped run: {run_id}")
+                except Exception as e:
+                    print(f"  Could not stop run {run_id}: {e}")
+    except Exception as e:
+        print(f"  Error during run shutdown: {e}")
+
     await close_db()
-    print("✓ Database closed")
-    
-    print("👋 Shutdown complete")
+    print("Database connection closed")
+    print("Shutdown complete")
 
 
 # ============================================================================
@@ -102,9 +150,14 @@ app = FastAPI(
 # ============================================================================
 
 # CORS
+# Read allowed origins from env var, falling back to localhost for development
+import os as _os
+_raw_origins = _os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001")
+_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -145,6 +198,13 @@ async def root():
     }
 
 
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {"status": "ok", "service": "fortiprompt"}
+
+
 # ============================================================================
 # Mount Socket.IO
 # ============================================================================
@@ -153,7 +213,7 @@ socketio_manager = get_socketio_manager()
 socket_app = socketio_manager.get_asgi_app()
 
 # Mount Socket.IO at /socket.io path
-app.mount("/socket", socket_app)
+app.mount("/socket.io", socket_app)
 
 
 # ============================================================================
@@ -169,7 +229,7 @@ if __name__ == "__main__":
     
     print(f"\n🌐 Starting server on http://{host}:{port}")
     print(f"📚 API docs available at http://{host}:{port}/docs")
-    print(f"🔌 Socket.IO available at http://{host}:{port}/socket\n")
+    print(f"🔌 Socket.IO available at http://{host}:{port}/socket.io\n")
     
     uvicorn.run(
         "server.main:app",

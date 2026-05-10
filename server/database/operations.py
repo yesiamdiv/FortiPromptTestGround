@@ -89,6 +89,17 @@ class DatabaseOperations:
         run_doc = await self.runs.find_one({"run_id": run_id})
         if run_doc:
             run_doc.pop("_id", None)
+            # Derive components from graph_config if not already stored
+            if not run_doc.get("components"):
+                gc = run_doc.get("graph_config", {})
+                comps = []
+                for key in ("attack_node_config", "defense_node_config", "evaluation_node_config"):
+                    cfg = gc.get(key, {})
+                    if isinstance(cfg, dict) and cfg.get("node_type"):
+                        comps.append(cfg["node_type"])
+                if gc.get("strategy_config", {}).get("strategy_name"):
+                    comps.append(gc["strategy_config"]["strategy_name"])
+                run_doc["components"] = comps
             return RunModel(**run_doc)
         return None
     
@@ -146,9 +157,11 @@ class DatabaseOperations:
             True if updated
         """
         debug("Marking run completed", run_id=run_id)
+        _now = datetime.utcnow().isoformat()
         updates = {
             "status": "completed",
-            "completed_at": datetime.utcnow().isoformat()
+            "completed_at": _now,
+            "updated_at": _now
         }
         
         if final_score is not None:
@@ -623,6 +636,51 @@ class DatabaseOperations:
         checkpoint("Manual turn data update complete", turn_id=turn_id)
         return result.modified_count > 0
     
+
+    async def get_attack_by_id(self, doc_id: str):
+        """Get an attack by MongoDB document ID (string)."""
+        from bson import ObjectId
+        try:
+            doc = await self.attacks.find_one({"_id": ObjectId(doc_id)})
+            if doc:
+                doc.pop("_id", None)
+                return AttackData(**doc)
+        except Exception:
+            pass
+        return None
+
+    async def get_defence_by_id(self, doc_id: str):
+        """Get a defence by MongoDB document ID (string)."""
+        from bson import ObjectId
+        try:
+            doc = await self.defences.find_one({"_id": ObjectId(doc_id)})
+            if doc:
+                doc.pop("_id", None)
+                return DefenceData(**doc)
+        except Exception:
+            pass
+        return None
+
+    async def get_evaluation_by_id(self, doc_id: str):
+        """Get an evaluation by MongoDB document ID (string)."""
+        from bson import ObjectId
+        try:
+            doc = await self.evaluations.find_one({"_id": ObjectId(doc_id)})
+            if doc:
+                doc.pop("_id", None)
+                return EvaluationData(**doc)
+        except Exception:
+            pass
+        return None
+
+    async def list_manual_sessions(self, run_id: str):
+        """List all manual sessions for a given run, ordered by creation time."""
+        tracer("Listing manual sessions", run_id=run_id)
+        cursor = self.manual_sessions.find({"run_id": run_id}).sort("created_at", 1)
+        docs = await cursor.to_list(length=None)
+        step(f"Found {len(docs)} sessions", run_id=run_id)
+        return [ManualSession(**{k: v for k, v in d.items() if k != "_id"}) for d in docs]
+
     # ========================================================================
     # Convenience function
     # ========================================================================

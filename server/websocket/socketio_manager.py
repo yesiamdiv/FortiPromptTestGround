@@ -28,7 +28,10 @@ class SocketIOManager:
         # Create Socket.IO server with ASGI mode
         self.sio = socketio.AsyncServer(
             async_mode='asgi',
-            cors_allowed_origins='*',  # Configure as needed
+            # CORS is handled entirely by FastAPI's CORSMiddleware.
+            # Setting cors_allowed_origins here causes a duplicate
+            # Access-Control-Allow-Origin header which browsers reject.
+            cors_allowed_origins=[],
             logger=False,
             engineio_logger=False
         )
@@ -79,7 +82,7 @@ class SocketIOManager:
             """
             tracer("Client joining room", sid=sid)
             try:
-                run_id = data.get('run_id')
+                run_id = data.get('run_id') or data.get('runId')  # accept both during transition
                 if not run_id:
                     await self.sio.emit('error', {
                         'message': 'run_id is required'
@@ -120,7 +123,7 @@ class SocketIOManager:
             """
             debug("Client leaving room", sid=sid)
             try:
-                run_id = data.get('run_id')
+                run_id = data.get('run_id') or data.get('runId')  # accept both during transition
                 if not run_id:
                     return
                 
@@ -146,6 +149,66 @@ class SocketIOManager:
             except Exception as e:
                 err(f"Error leaving room: {e}")
         
+        @self.sio.event
+        async def join_run_channel(sid, data):
+            """Alias for join_run_room — accepts the frontend's event name."""
+            await join_run_room(sid, data)
+
+        @self.sio.event
+        async def leave_run_channel(sid, data):
+            """Alias for leave_run_room — accepts the frontend's event name."""
+            await leave_run_room(sid, data)
+
+        @self.sio.event
+        async def join_session_room(sid, data):
+            """
+            Join a session-specific room (for manual runs).
+
+            Data format:
+            {
+                "session_id": "sess_abc123"
+            }
+            """
+            tracer("Client joining session room", sid=sid)
+            try:
+                session_id = data.get('session_id')
+                if not session_id:
+                    await self.sio.emit('error', {
+                        'message': 'session_id is required'
+                    }, to=sid)
+                    return
+
+                await self.sio.enter_room(sid, session_id)
+                step("Client joined session room", session_id=session_id, sid=sid)
+
+                await self.sio.emit('session_room_joined', {
+                    'session_id': session_id,
+                    'message': f'Joined room for session {session_id}'
+                }, to=sid)
+
+            except Exception as e:
+                err(f"Error joining session room: {e}")
+                await self.sio.emit('error', {'message': str(e)}, to=sid)
+
+        @self.sio.event
+        async def leave_session_room(sid, data):
+            """
+            Leave a session-specific room.
+
+            Data format:
+            {
+                "session_id": "sess_abc123"
+            }
+            """
+            debug("Client leaving session room", sid=sid)
+            try:
+                session_id = data.get('session_id')
+                if session_id:
+                    await self.sio.leave_room(sid, session_id)
+                    debug("Client left session room", session_id=session_id, sid=sid)
+            except Exception as e:
+                err(f"Error leaving session room: {e}")
+
         @self.sio.event
         async def ping(sid, data):
             """Handle ping for connection health check"""

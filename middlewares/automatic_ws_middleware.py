@@ -11,7 +11,7 @@ CHANGES FROM ORIGINAL:
 """
 
 from typing import Dict, Any, Optional
-from middlewares.base_refactored import BaseMiddleware
+from middlewares.base import BaseMiddleware
 from server.websocket.socketio_manager import SocketIOManager
 from server.websocket.operations import get_ws_ops
 from engine.debug_utils import debug, tracer, step, warn, err
@@ -86,7 +86,8 @@ class AutomaticWSMiddleware(BaseMiddleware):
             # Extract iteration context
             context = state.get("strategy_context", {})
             iteration = context.get("iteration_count", 0)
-            turn_id = context.get("turn_id", f"turn_{iteration}")
+            # 5-B4: turn_id lives in current_turn, not strategy_context
+            turn_id = state.get("current_turn", {}).get("turn_id") or context.get("turn_id", f"turn_{iteration}")
 
             # Route based on node name
             if node_name == "attack" and self.middleware_config.get("broadcast_attacks"):
@@ -135,7 +136,15 @@ class AutomaticWSMiddleware(BaseMiddleware):
             
             await self.ws_ops.broadcast_run_completed(run_id, final_data)
             step("Run completed broadcast sent")
-            
+
+            # Notify all connected clients that a new completed run is available
+            # (used to refresh the runs list in the frontend sidebar)
+            context = state.get("strategy_context", {})
+            await self.ws_ops.broadcast_new_run_available(run_id, {
+                "strategy": context.get("strategy_name", "unknown"),
+                "status": "completed",
+            })
+
         except Exception as e:
             err("Error in after_run", error=str(e))
     
@@ -260,7 +269,24 @@ class AutomaticWSMiddleware(BaseMiddleware):
             turn_id,
             iteration
         )
-    
+
+        # Emit per-turn stats using context (no extra DB hit needed)
+        context = state.get("strategy_context", {})
+        iteration_count = context.get("iteration_count", iteration)
+        successful = context.get("successful_iterations", 0)
+        total = max(iteration_count, 1)
+        await self.ws_ops.broadcast_to_room(run_id, "evaluation_stats_updated", {
+            "type": "evaluation_stats_updated",
+            "run_id": run_id,
+            "stats": {
+                "total_evaluations": iteration_count,
+                "success_rate": successful / total if total else 0.0,
+                "latest_score": evaluation.score,
+                "latest_success": evaluation.success,
+                "latest_category": evaluation.category,
+            }
+        })
+
     async def _broadcast_routing(
         self, 
         run_id: str, 
@@ -350,7 +376,8 @@ class AutomaticWSMiddleware(BaseMiddleware):
 #         try:
 #             context = node_output.get("strategy_context", {})
 #             iteration = context.get("iteration_count", 0)
-#             turn_id = context.get("turn_id", f"turn_{iteration}")
+#             # 5-B4: turn_id lives in current_turn, not strategy_context
+            # turn_id = state.get("current_turn", {}).get("turn_id") or context.get("turn_id", f"turn_{iteration}")
 
 #             if node_name == "attack" and self.config.get("broadcast_attacks"):
 #                 await self._broadcast_attack(run_id, iteration, node_output, turn_id)

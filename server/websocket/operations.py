@@ -102,12 +102,12 @@ class WebSocketOperations:
         """
         Broadcast evaluation completion event for automatic runs.
         """
-        debug("Broadcasting evaluation_complete", run_id=run_id, index=index)
+        debug("Broadcasting evaluation_result", run_id=run_id, index=index)
         await self.sio_manager.broadcast_to_room(
             run_id,
-            'evaluation_complete',
+            'evaluation_result',
             {
-                'type': 'evaluation_complete',
+                'type': 'evaluation_result',
                 'run_id': run_id,
                 'turn_id': turn_id,
                 'index': index,
@@ -307,14 +307,13 @@ class WebSocketOperations:
     ):
         """
         Broadcast run idle event (for manual runs awaiting user input).
-        
-        Args:
-            run_id: Run identifier
-            data: Additional data, e.g., message, last turn info.
+        Broadcasts to the session room (not the run room) so manual clients receive it.
         """
         debug("Broadcasting run_idle", run_id=run_id)
+        session_id = data.get('session_id')
+        room = session_id if session_id else run_id  # prefer session room for manual runs
         await self.sio_manager.broadcast_to_room(
-            run_id,
+            room,
             'run_idle',
             {
                 'type': 'run_idle',
@@ -351,19 +350,18 @@ class WebSocketOperations:
 
 
 # Convenience function
+    async def broadcast_to_room(self, room: str, event: str, data: Dict[str, Any]) -> None:
+        """
+        Direct passthrough to sio_manager.broadcast_to_room.
+        Allows middlewares to emit arbitrary events to any room without
+        needing a named wrapper method for each one.
+        """
+        await self.sio_manager.broadcast_to_room(room, event, data)
+
+
 def get_ws_ops(socketio_manager: SocketIOManager) -> WebSocketOperations:
     """
     Create WebSocketOperations instance.
-    
-    Args:
-        socketio_manager: Socket.IO manager instance
-    
-    Returns:
-        WebSocketOperations instance
     """
     debug("Creating WebSocketOperations instance")
-    return WebSocketOperations(socketio_manager)
-    """
-    Create WebSocket operations instance.
-    """
     return WebSocketOperations(socketio_manager)

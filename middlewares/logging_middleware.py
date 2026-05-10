@@ -10,7 +10,7 @@ CHANGES FROM ORIGINAL:
 
 from typing import Dict, Any, Optional
 from datetime import datetime
-from middlewares.base_refactored import BaseMiddleware
+from middlewares.base import BaseMiddleware
 from engine.debug_utils import debug, tracer, step, warn, err
 from engine.state_schema import SystemState
 

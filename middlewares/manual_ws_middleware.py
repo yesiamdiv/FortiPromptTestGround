@@ -9,7 +9,7 @@ CHANGES FROM ORIGINAL:
 """
 
 from typing import Dict, Any, Optional
-from middlewares.base_refactored import BaseMiddleware
+from middlewares.base import BaseMiddleware
 from server.websocket.socketio_manager import SocketIOManager
 from server.websocket.operations import get_ws_ops
 from engine.debug_utils import debug, tracer, step, warn, err
@@ -56,8 +56,9 @@ class ManualWSMiddleware(BaseMiddleware):
             session_id = state.get("session_id", payload.get("session_id"))
             
             if session_id:
-                await self.ws_ops.sio_manager.join_room(session_id)
-                debug("Joined session room", session=session_id)
+                # Note: Server-side join_room isn't meaningful here;
+                # clients join themselves via the join_session_room WS event.
+                debug("Session room available", session=session_id)
             
             await self.ws_ops.broadcast_run_started(
                 run_id,
@@ -98,25 +99,46 @@ class ManualWSMiddleware(BaseMiddleware):
             if node_name == "attack" and self.middleware_config.get("broadcast_attacks"):
                 attack = current_turn.get("attack")
                 if attack:
+                    attack_data = {
+                        'preview': attack.to_string()[:200] if hasattr(attack, 'to_string') else str(attack)[:200],
+                        'full_text': attack.to_string() if hasattr(attack, 'to_string') else str(attack),
+                        'type': attack._infer_type() if hasattr(attack, '_infer_type') else 'text',
+                        'metadata': attack.metadata if hasattr(attack, 'metadata') else {},
+                        'timestamp': current_turn.get("timestamp")
+                    }
                     await self.ws_ops.broadcast_manual_attack_generated(
-                        run_id, session_id, turn_id, iteration,
-                        attack.to_dict()  # ✓ Use .to_dict() method
+                        run_id, session_id, turn_id, iteration, attack_data
                     )
             
             elif node_name == "defence" and self.middleware_config.get("broadcast_defences"):
                 defence = current_turn.get("defence")
                 if defence:
+                    defence_data = {
+                        'preview': (defence.response_text if hasattr(defence, 'response_text') else str(defence))[:200],
+                        'full_text': defence.response_text if hasattr(defence, 'response_text') else str(defence),
+                        'status_code': defence.status_code if hasattr(defence, 'status_code') else 200,
+                        'was_blocked': defence.was_blocked() if hasattr(defence, 'was_blocked') else False,
+                        'metadata': defence.metadata if hasattr(defence, 'metadata') else {},
+                        'timestamp': current_turn.get("timestamp")
+                    }
                     await self.ws_ops.broadcast_manual_defence_response(
-                        run_id, session_id, turn_id, iteration,
-                        defence.to_dict()  # ✓ Use .to_dict() method
+                        run_id, session_id, turn_id, iteration, defence_data
                     )
             
             elif node_name == "eval" and self.middleware_config.get("broadcast_evaluations"):
                 evaluation = current_turn.get("evaluation")
                 if evaluation:
+                    eval_data = {
+                        'score': evaluation.score if hasattr(evaluation, 'score') else 0.0,
+                        'success': evaluation.success if hasattr(evaluation, 'success') else False,
+                        'category': evaluation.category if hasattr(evaluation, 'category') else 'unknown',
+                        'reasoning': evaluation.reasoning if hasattr(evaluation, 'reasoning') else '',
+                        'label': 'breached' if (hasattr(evaluation, 'success') and evaluation.success) else 'blocked',
+                        'metadata': evaluation.metadata if hasattr(evaluation, 'metadata') else {},
+                        'timestamp': current_turn.get("timestamp")
+                    }
                     await self.ws_ops.broadcast_manual_evaluation_complete(
-                        run_id, session_id, turn_id, iteration,
-                        evaluation.to_dict()  # ✓ Use .to_dict() method
+                        run_id, session_id, turn_id, iteration, eval_data
                     )
             
             elif node_name == "router":

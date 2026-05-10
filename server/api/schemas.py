@@ -39,8 +39,8 @@ class ListRunsResponse(BaseModel):
 # --- Manual Session & Turn Schemas ---
 
 class CreateManualSessionRequest(BaseModel):
-    run_id: str = Field(..., description="The ID of the parent run.")
-    name: str = Field(..., description="A human-readable name for the manual session.")
+    # run_id comes from the URL path parameter, NOT the request body
+    name: str = Field(default="Session", description="A human-readable name for the manual session.")
     description: Optional[str] = Field(None, description="Optional description for the session.")
     initial_payload: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Initial payload for the first turn (e.g., user's first prompt). Can contain runtime_config.")
 
@@ -60,6 +60,12 @@ class ManualTurnResponse(ManualTurn):
 class ManualTurnHistoryResponse(BaseModel):
     session: ManualSession
     turns: List[ManualTurnResponse] # Returns detailed turns
+
+class SubmitManualTurnResponse(BaseModel):
+    run_id: str
+    session_id: str
+    turn_id: str
+    status: str
 
 # --- Strategy Schemas ---
 
