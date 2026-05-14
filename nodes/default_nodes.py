@@ -78,25 +78,53 @@ class DefaultInitNode(BaseAdversarialNode):
 
 
 class DefaultAttackNode(BaseAdversarialNode):
-    """Executes the attack generation strategy."""
-
+    """
+    Attack node that fully delegates to an injected strategy.
+    
+    The strategy is responsible for:
+    - Making LLM calls (single or multiple)
+    - Processing data
+    - Managing complex workflows
+    - Storing intermediate results
+    
+    This node simply wraps the strategy's `execute_generation` method.
+    """
+    
+    def __init__(self, config: Dict[str, Any] = None):
+        """Initialize attack node and extract static params."""
+        super().__init__(config)
+        # Extract static node_params in case future pre/post-processing needs them
+        self.node_params = self.config["node_params"] if "node_params" in self.config else {}
+    
     async def execute(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
         if runtime_config is None: runtime_config = {}
-        tracer("DefaultAttackNode.execute")
+        tracer("StrategyDrivenAttackNode.execute")
         
-        strategy = self.config.get('strategy')
-        if not strategy:
-            raise AttributeError("Strategy instance not found in node config")
+        # STRICT CONFIG ACCESS: Fail fast if the Builder didn't inject the strategy
+        if "strategy" not in self.config:
+            err("Strategy instance not found in Attack Node config")
+            raise AttributeError("Strategy instance not found in Attack Node's self.config.")
             
-        # Any custom node-specific logic (formatting, prep) goes here
+        strategy = self.config["strategy"]
+        
+        debug("Delegating to strategy execute_generation", strategy_type=type(strategy).__name__)
+        
+        # Explicit delegation: Pass both the strict state and the dynamic runtime_config
+        result_delta = await strategy.execute_generation(state, runtime_config)
+        
+        step("Attack generation complete", result_keys=list(result_delta.keys()))
+        return result_delta
 
-        # Delegate generation to strategy
-        result = await strategy.execute_generation(state, runtime_config)
-        return result
-    
     @classmethod
     def get_node_schema(cls) -> Dict[str, Any]:
-        return {"type": "object", "properties": {}, "description": "Delegates to strategy.execute_generation()"}
+        """
+        Return JSON schema describing the node's parameters.
+        """
+        return {
+            "type": "object",
+            "properties": {},
+            "description": "Attack node delegates entirely to strategy.execute_generation(). No node-specific params."
+        }
 
 
 class DefaultDefenceNode(BaseAdversarialNode):

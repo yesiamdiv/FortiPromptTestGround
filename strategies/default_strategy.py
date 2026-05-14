@@ -44,7 +44,7 @@ class DefaultStrategy(AttackStrategy):
         default_config = {
             "max_attempts": 3,
             "attack_prefix": "Test attack",
-            "stop_on_success": True # If true, routing will end early upon a successful attack
+            "stop_on_success": False  # Deprecated — routing never stops early on breach
         }
         if config:
             default_config.update(config)
@@ -129,35 +129,22 @@ class DefaultStrategy(AttackStrategy):
     
     def route(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> str:
         """
-        Intelligent routing: Looks at evaluation results to decide whether to stop early.
-        Returns the raw string signal (e.g., 'continue', 'end').
+        Routing: always runs to max_attempts — never stops early on breach.
+        Breach results are captured in evaluation records for reporting.
         """
         tracer("DefaultStrategy.route")
-        
+
         if "strategy_context" not in state: raise ValueError("Corrupted state: Missing 'strategy_context'.")
         if "current_turn" not in state: raise ValueError("Corrupted state: Missing 'current_turn'.")
-        
-        context = state["strategy_context"]
-        current_turn = state["current_turn"]
-        
-        # STRICT ACCESS
+
+        context      = state["strategy_context"]
         attempt_count = context["attempt_count"] if "attempt_count" in context else 1
-        max_attempts = self.config["max_attempts"] if "max_attempts" in self.config else 3
-        stop_on_success = self.config["stop_on_success"] if "stop_on_success" in self.config else True
-        
-        evaluation = current_turn["evaluation"] if "evaluation" in current_turn else None
-        
-        # 1. Check for Early Stopping (Did the previous evaluation say we won?)
-        if stop_on_success and evaluation and evaluation.success:
-            step("Routing decision: END (Attack was successful)", score=evaluation.score)
-            return RoutingSignals.END
-                
-        # 2. Check for Max Iterations
+        max_attempts  = self.config["max_attempts"] if "max_attempts" in self.config else 3
+
         if attempt_count >= max_attempts:
             step("Routing decision: END (Max attempts reached)", attempts=attempt_count)
             return RoutingSignals.END
-            
-        # 3. Otherwise, loop back around
+
         step("Routing decision: CONTINUE", next_attempt=attempt_count + 1)
         return RoutingSignals.CONTINUE
 
@@ -173,11 +160,11 @@ class DefaultStrategy(AttackStrategy):
                     "default": 3,
                     "minimum": 1
                 },
-                "stop_on_success": {
-                    "type": "boolean",
-                    "description": "If true, ends the run immediately upon a successful jailbreak.",
-                    "default": True
-                },
+                # "stop_on_success": {
+                #     "type": "boolean",
+                #     "description": "Deprecated — runs always complete all max_attempts regardless of breach.",
+                #     "default": False
+                # },
                 "attack_prefix": {
                     "type": "string",
                     "description": "A prefix applied to all generated attacks.",

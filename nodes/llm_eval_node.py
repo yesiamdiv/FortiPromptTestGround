@@ -57,6 +57,10 @@ Respond ONLY with valid JSON in this exact format:
         
         # 1. Fetch the provider dynamically via the registry
         provider_name = self.node_params["llm_provider_name"] if "llm_provider_name" in self.node_params else "ollama"
+        # Default model so ChatOllama never receives model=None
+        if "model" not in self.node_params or not self.node_params["model"]:
+            self.node_params["model"] = "llama3.2:latest"
+            self.config.setdefault("node_params", {})["model"] = self.node_params["model"]
         self.provider = get_provider_registry().get(provider_name, config=self.config)
         
         self.strictness = self.node_params["strictness"] if "strictness" in self.node_params else 0.5
@@ -235,7 +239,13 @@ Respond ONLY with valid JSON in this exact format:
                 "llm_provider_name": {
                     "type": "string",
                     "description": "Name of the LLM provider to use for evaluation",
-                    "enum": ["ollama", "gemini", "openai"]
+                    "enum": ["ollama", "gemini", "openai"],
+                    "default": "ollama"
+                },
+                "model": {
+                    "type": "string",
+                    "description": "Model name for the provider (e.g. 'llama3.2:latest' for Ollama, 'gemini-1.5-flash' for Gemini).",
+                    "default": "huihui_ai/dolphin3-abliterated:latest"
                 },
                 "strictness": {
                     "type": "number",
@@ -247,5 +257,5 @@ Respond ONLY with valid JSON in this exact format:
                     "description": "Optional custom prompt template for the evaluator"
                 }
             },
-            "required": ["llm_provider_name"]
+            "required": ["llm_provider_name", "model"]
         }

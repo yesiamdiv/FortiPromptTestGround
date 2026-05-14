@@ -39,7 +39,10 @@ class IterativeImprovementStrategy(AttackStrategy):
             "target_score": 0.8,
             "temperature": 0.9,
             "max_tokens": 500,
-            "llm_provider_name": "ollama"
+            "llm_provider_name": "ollama",
+            # "model" is required by the provider. If the frontend doesn't send it,
+            # this default prevents a Pydantic validation error from ChatOllama(model=None).
+            "model": "huihui_ai/dolphin3-abliterated:latest"
         }
         
         if config:
@@ -48,6 +51,16 @@ class IterativeImprovementStrategy(AttackStrategy):
         super().__init__(default_config)
         
         provider_name = self.config["llm_provider_name"]
+
+        # Guard: model=None causes a Pydantic crash inside ChatOllama.
+        # This happens when the frontend omits "model" from strategy_params.
+        if not self.config.get("model"):
+            raise ValueError(
+                f"Strategy config is missing 'model'. "
+                f"Set strategy_params.model to a valid {provider_name} model name "
+                f"(e.g. 'llama3.2:latest' for Ollama)."
+            )
+
         self.provider = get_provider_registry().get(provider_name, config=self.config)
         debug("Provider acquired", provider=provider_name, model=self.provider.get_model_name())
         
@@ -117,18 +130,13 @@ class IterativeImprovementStrategy(AttackStrategy):
         evaluation = current_turn["evaluation"] if "evaluation" in current_turn else None
         
         if evaluation and iteration > 0:
-            current_score = evaluation.score 
+            current_score = evaluation.score
             best_score = context["best_score"] if "best_score" in context else 0.0
-            
             if current_score > best_score:
                 context["best_score"] = current_score
-                context["best_attack"] = context["attack_history"][-1]["attack_text"]
+                context["best_attack"] = context["attack_history"][-1]["attack_text"] if context["attack_history"] else ""
                 debug("New best score recorded", score=current_score)
-            
-            target_score = context["target_score"] if "target_score" in context else 0.8
-            if current_score >= target_score or evaluation.success:
-                context["target_achieved"] = True
-                debug("Target achieved in previous turn")
+            # Note: breach is recorded but does NOT stop generation — run always completes max_iterations
         
         # --- 2. GENERATION ---
         active_temp = runtime_config["temperature"] if "temperature" in runtime_config else self.config["temperature"]
@@ -234,19 +242,14 @@ class IterativeImprovementStrategy(AttackStrategy):
         target_score = context["target_score"] if "target_score" in context else self.config["target_score"]
         current_iteration = context["iteration_count"] if "iteration_count" in context else 0
 
-        # 1. Stop if target achieved
-        if evaluation:
-            if evaluation.score >= target_score or evaluation.success:
-                debug("Target achieved, ending graph execution")
-                return RoutingSignals.END
-                
-        # 2. Stop if max iterations reached
+        # Stop only when max iterations are exhausted.
+        # Breaches are recorded in eval results but do NOT terminate early —
+        # the run always completes all configured iterations.
         if current_iteration >= max_iters:
-            debug("Max iterations reached, ending graph execution")
+            debug("Max iterations reached, ending run", iteration=current_iteration)
             return RoutingSignals.END
-            
-        # 3. Otherwise, loop back to attack
-        debug("Continuing to next iteration")
+
+        debug("Continuing to next iteration", iteration=current_iteration, max=max_iters)
         return RoutingSignals.CONTINUE
 
     @classmethod
@@ -258,6 +261,12 @@ class IterativeImprovementStrategy(AttackStrategy):
                     "type": "string",
                     "description": "Name of the LLM provider to use (e.g., 'ollama', 'gemini')",
                     "enum": ["ollama", "gemini", "openai"],
+                    "default": "ollama"
+                },
+                "model": {
+                    "type": "string",
+                    "description": "Model name to use with the provider (e.g. 'llama3.2:latest' for Ollama, 'gemini-1.5-flash' for Gemini).",
+                    "default": "huihui_ai/dolphin3-abliterated:latest"
                 },
                 "max_iterations": {
                     "type": "integer",
@@ -280,5 +289,5 @@ class IterativeImprovementStrategy(AttackStrategy):
                     "default": 500
                 }
             },
-            "required": ["llm_provider_name"],
+            "required": ["llm_provider_name", "model"],
         }

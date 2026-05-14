@@ -18,6 +18,7 @@ from nodes.router_node import RouterNode
 from strategies.default_strategy import DefaultStrategy
 from strategies.iterative_improvement_strategy import IterativeImprovementStrategy
 from strategies.manual_strategy import ManualStrategy # Import ManualStrategy
+from strategies.redgen_strategy import RedGenStrategy
 
 # Import provider registry and registration function
 from engine.provider_registry import get_provider_registry, register_all_providers
@@ -102,14 +103,14 @@ def register_all_components():
     tracer("register_all_components")
     
     # 1. Direct Registration (No lambda wrappers, no factory functions!)
-    _node_registry.register("default_attack", DefaultAttackNode)
+    _node_registry.register("default_attack", StrategyDrivenAttackNode)
     _node_registry.register("default_defense", DefaultDefenceNode)
     _node_registry.register("default_eval", DefaultEvalNode)
     step("Registered default nodes", nodes=["default_attack", "default_defense", "default_eval"])
     
     # 2. Clean Custom Nodes
     _node_registry.register("router", RouterNode)
-    _node_registry.register("strategy_attack", StrategyDrivenAttackNode)
+    # _node_registry.register("strategy_attack", StrategyDrivenAttackNode)
     _node_registry.register("ensemble_defense", EnsembleDefenceNode)
     _node_registry.register("server_eval", ServerEvalNode)
     _node_registry.register("llm_eval", LLMEvalNode)
@@ -119,6 +120,7 @@ def register_all_components():
     # 3. Strategies were already doing it perfectly!
     _strategy_registry.register("default", DefaultStrategy)
     _strategy_registry.register("iterative_improvement", IterativeImprovementStrategy)
+    _strategy_registry.register("redgen_attack", RedGenStrategy)
     _strategy_registry.register("manual", ManualStrategy)
     step("Registered strategies", strategies=["default", "iterative_improvement", "manual"])
     

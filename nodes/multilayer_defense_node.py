@@ -463,13 +463,41 @@ class MultilayerDefenseNode(BaseAdversarialNode):
             print(f"❌  An error occurred during DefenseSystem initialization for {self.name}: {e}")
             self.defense_system = None # Ensure it's None if initialization fails
 
+        # Print once at startup — not on every execute() call
+        self._log_capability_summary()
+
+    def _log_capability_summary(self):
+        """Print a clear summary of which defense layers are actually loaded."""
+        if self.defense_system is None:
+            print(f"[MultilayerDefense:{self.name}] OFFLINE — defense system failed to initialise.")
+            return
+
+        ds = self.defense_system
+        layers = []
+
+        l1_ok = bool(ds.vectorizer and ds.binary_models)
+        l2_ok = getattr(ds, "bert_available", False)
+        l3_ok = getattr(ds, "harmful_available", False)
+
+        layers.append(f"L1-Ensemble={'OK (' + ','.join(ds.binary_models.keys()) + ')' if l1_ok else 'MISSING — ensure BoW/TF-IDF joblib files are in nodes/data/'}")
+        layers.append(f"L2-BERT={'OK' if l2_ok else 'SKIPPED — place fortiprompt_bert_rnn.pt + bert_label_encoder.pkl in nodes/data/'}")
+        layers.append(f"L3-HarmfulDetector={'OK' if l3_ok else 'SKIPPED — place fortiprompt_harmful_detector/ dir in nodes/data/'}")
+
+        active_count = sum([l1_ok, l2_ok, l3_ok])
+        status = "FULL" if active_count == 3 else f"PARTIAL ({active_count}/3 layers)"
+        print(f"[MultilayerDefense:{self.name}] {status}")
+        for layer in layers:
+            print(f"  {layer}")
+        if active_count < 3:
+            print(f"  NOTE: Missing layers are skipped gracefully — the node still runs but with reduced accuracy.")
+
     async def execute(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Processes the input data through the multilayer defense pipeline.
         Retrieves input from state and returns updated state.
         """
         if runtime_config is None: runtime_config = {}
-        
+
         if self.defense_system is None:
             print(f"Error: Defense System not initialized for node {self.name}. Cannot process input.")
             # Fail gracefully with a Domain Model
@@ -508,11 +536,15 @@ class MultilayerDefenseNode(BaseAdversarialNode):
             response_text = "Request denied by AI Defense System." if is_malicious else "Request processed successfully."
             
             from engine.domain_models import create_defence_response
+            # Pop keys that clash with the factory function's own parameters
+            # before unpacking result into **metadata.
+            safe_meta = {k: v for k, v in result.items()
+                         if k not in ("text", "status_code", "headers")}
             defence_payload = create_defence_response(
                 text=response_text,
                 status_code=status_code,
                 headers={"x-decision-source": str(result.get("decision_source", "unknown"))},
-                **result # Unpack the entire ML result dictionary into the metadata!
+                **safe_meta
             )
             
             # --- 4. RETURN CLEAN DELTAS ---
@@ -531,19 +563,46 @@ class MultilayerDefenseNode(BaseAdversarialNode):
 
     @classmethod
     def get_node_schema(cls) -> Dict[str, Any]:
-        """Return JSON schema for node parameters"""
+        """Return JSON schema for tunable node_params of MultilayerDefenseNode."""
         return {
             "type": "object",
             "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Name identifier for this defense node",
-                    "default": "multilayer_defense"
+                "ensemble_vote_threshold": {
+                    "type": "integer",
+                    "description": "Number of L1 ensemble models that must vote malicious to trigger a block (out of 3).",
+                    "default": 2,
+                    "minimum": 1,
+                    "maximum": 3
                 },
-                "node_configs": {
-                    "type": "object",
-                    "description": "Configuration for individual node components"
+                "bert_override_conf": {
+                    "type": "number",
+                    "description": "L2 BERT confidence above which the BERT verdict overrides L1 ensemble alone.",
+                    "default": 0.85,
+                    "minimum": 0.0,
+                    "maximum": 1.0
+                },
+                "bert_medium_conf": {
+                    "type": "number",
+                    "description": "L2 BERT confidence above which a medium-confidence flag is accepted.",
+                    "default": 0.60,
+                    "minimum": 0.0,
+                    "maximum": 1.0
+                },
+                "bert_category_conf": {
+                    "type": "number",
+                    "description": "L2 BERT confidence above which BERT's category label is used instead of L1's.",
+                    "default": 0.80,
+                    "minimum": 0.0,
+                    "maximum": 1.0
+                },
+                "harmful_conf_threshold": {
+                    "type": "number",
+                    "description": "L3 harmful-content detector confidence required to trigger a block.",
+                    "default": 0.75,
+                    "minimum": 0.0,
+                    "maximum": 1.0
                 }
-            }
+            },
+            "required": []
         }
 

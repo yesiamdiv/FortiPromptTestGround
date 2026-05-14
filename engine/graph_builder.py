@@ -197,11 +197,32 @@ class ConfigurableGraphBuilder:
         debug("Router Signal extracted", signal=signal)
         return signal
             
-    def compile(self)->CompiledStateGraph:
-        """Compiles the graph."""
+    def compile(self, recursion_limit: int = 0) -> CompiledStateGraph:
+        """
+        Compiles the graph.
+
+        Args:
+            recursion_limit: LangGraph step ceiling. Each run iteration uses
+                             ~6 steps (router + attack + defence + eval + router).
+                             Pass 0 (default) to auto-calculate from the
+                             strategy's max_iterations, or pass an explicit value.
+        """
         checkpoint("Compiling graph")
         compiled = self.graph.compile()
-        step("Graph compiled successfully")
+
+        # Calculate a safe recursion limit so LangGraph never chokes on long runs.
+        # Formula: (max_iterations * 6 steps) + 20 buffer.
+        # 6 = init + router + attack + defence + eval + router (per iteration).
+        if recursion_limit <= 0:
+            max_iters = (
+                self.graph_config.strategy_config.strategy_params.get("max_iterations", 10)
+                if self.graph_config.strategy_config.strategy_params
+                else 10
+            )
+            recursion_limit = max(max_iters * 6 + 20, 50)
+
+        self._recursion_limit = recursion_limit
+        step("Graph compiled successfully", recursion_limit=recursion_limit)
         return compiled
 
 def build_default_graph()->CompiledStateGraph:
@@ -209,11 +230,11 @@ def build_default_graph()->CompiledStateGraph:
     tracer("build_default_graph")
     default_config = GraphConfig(
         graph_type="automatic",
-        attack_node_config=AttackNodeConfig(node_type="default_attack"),
+        attack_node_config=AttackNodeConfig(node_type="strategy_attack"),
         defense_node_config=DefenseNodeConfig(node_type="default_defense"),
         evaluation_node_config=EvaluationNodeConfig(node_type="default_eval"),
         strategy_config=StrategyConfig(strategy_name="default", strategy_params={})
     )
     debug("Building default graph", graph_type=default_config.graph_type)
     builder = ConfigurableGraphBuilder(default_config)
-    return builder.compile()
+    return builder.compile()  # uses auto-calculated recursion_limit
