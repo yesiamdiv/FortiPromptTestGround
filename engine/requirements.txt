@@ -1,0 +1,16 @@
+# PromptArena dependencies
+
+# Core graph engine
+langgraph>=0.2.0
+langchain-core>=0.3.0
+
+# LLM provider integrations (install only what you need)
+langchain-openai>=0.2.0        # OpenAI / Azure / any OpenAI-compatible endpoint
+langchain-anthropic>=0.2.0     # Anthropic Claude
+langchain-ollama>=0.1.0        # Local models via Ollama (optional)
+
+# HTTP client (for APIDefender)
+requests>=2.31.0
+
+# Utilities
+python-dotenv>=1.0.0           # Load .env files
