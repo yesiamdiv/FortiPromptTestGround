@@ -5,7 +5,7 @@ CHANGES FROM ORIGINAL:
 - ✓ Uses strict SystemState typing
 - ✓ Direct property access (NOT legacy getters)
 - ✓ Consistent runtime_config naming
-- ✓ Aligned with base_refactored.py signature
+- ✓ Aligned with base.py (BaseMiddleware) signature
 """
 
 from typing import Dict, Any, Optional
@@ -15,6 +15,7 @@ from server.database.operations import get_db_ops
 from engine.debug_utils import debug, tracer, step, warn, err
 from engine.state_schema import SystemState
 import uuid
+from datetime import datetime
 
 
 class ManualDatabaseMiddleware(BaseMiddleware):
@@ -66,9 +67,12 @@ class ManualDatabaseMiddleware(BaseMiddleware):
             strategy_context = state.get("strategy_context", {})
             if last_manual_turn:
                 debug("Hydrating state from last turn", turn=last_manual_turn.turn_id)
-                history = [last_manual_turn.attack_prompt] if last_manual_turn.attack_prompt else []
-                strategy_context["history"] = history
+                # ManualTurn has no attack_prompt field — only attack_data_id.
+                # History is rebuilt by ManualStrategy from the conversation payload;
+                # we only need to restore the iteration count.
                 strategy_context["iteration_count"] = last_manual_turn.index + 1
+                if "history" not in strategy_context:
+                    strategy_context["history"] = []
             else:
                 debug("Starting new turn, no prior turns")
                 strategy_context["history"] = []
@@ -84,6 +88,11 @@ class ManualDatabaseMiddleware(BaseMiddleware):
             state["current_turn"] = {"turn_id": current_turn_id}
             state["session_id"] = session_id
             
+            # Persist started_at on the very first turn
+            if strategy_context.get("iteration_count", 0) == 0:
+                _now = datetime.utcnow().isoformat()
+                await db_ops.update_run(run_id, {"started_at": _now, "updated_at": _now})
+
             await db_ops.create_manual_turn(
                 session_id=session_id,
                 turn_id=current_turn_id,
@@ -141,7 +150,14 @@ class ManualDatabaseMiddleware(BaseMiddleware):
         state: SystemState, 
         run_id: str
     ) -> None:
-        """Mark run as idle and save final state"""
+        """
+        Mark manual run as IDLE and save final state.
+        
+        ARCHITECTURAL BOUNDARY:
+        For manual runs, when LangGraph reaches __end__, it only means the current turn is over.
+        This middleware is responsible for the "Happy Path" status update to IDLE with manual_wait_active=True,
+        so the run is ready to accept the next user prompt.
+        """
         db = get_db()
         if db is None:
             return
@@ -164,7 +180,7 @@ class ManualDatabaseMiddleware(BaseMiddleware):
                 session_id = context.get("session_id")
             if not session_id:
                 err("Cannot find session_id in final_state or strategy_context", run_id=run_id)
-                await db_ops.update_run(run_id, {"status": "idle"})
+                await db_ops.update_run(run_id, {"status": "idle", "manual_wait_active": True})
                 return
             
             await db_ops.update_manual_session_state(
@@ -175,8 +191,14 @@ class ManualDatabaseMiddleware(BaseMiddleware):
                 best_score=best_score
             )
             
-            await db_ops.update_run(run_id, {"status": "idle"})
-            step("Manual run turn completed, state saved, set to IDLE", run_id=run_id)
+            # Update run status to IDLE with manual_wait_active (Happy Path)
+            from datetime import datetime
+            await db_ops.update_run(run_id, {
+                "status": "idle",
+                "manual_wait_active": True,
+                "updated_at": datetime.utcnow().isoformat()
+            })
+            step("Manual run turn completed, state saved, set to IDLE with manual_wait_active=True", run_id=run_id)
             
         except Exception as e:
             err("Error in after_run", error=str(e))

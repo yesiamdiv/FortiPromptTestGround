@@ -80,23 +80,14 @@ async def lifespan(app: FastAPI):
     # 2b. Stale-run recovery - reset any run stuck in "running" from a previous crash
     if db is not None:
         try:
-            from server.database.operations import get_db_ops as _get_db_ops
-            from datetime import datetime as _dt
-            _db_ops = _get_db_ops(db)
-            stale_docs = await db.runs.find({"status": "running"}).to_list(length=None)
-            if stale_docs:
-                print(f"[WARN] Found {len(stale_docs)} stale running run(s) - resetting to 'idle'")
-                for doc in stale_docs:
-                    rid = doc.get("run_id", str(doc.get("_id", "unknown")))
-                    await _db_ops.update_run(rid, {
-                        "status": "idle",
-                        "updated_at": _dt.utcnow().isoformat()
-                    })
-                    print(f"       Reset stale run: {rid}")
+            run_manager = get_run_manager()
+            cleanup_result = await run_manager.cleanup_zombie_runs()
+            if cleanup_result["cleaned"] > 0:
+                print(f"[OK] Cleaned up {cleanup_result['cleaned']} zombie run(s)")
             else:
-                print("[OK] No stale runs found")
+                print("[OK] No zombie runs found")
         except Exception as e:
-            print(f"[WARN] Stale-run recovery failed: {e}")
+            print(f"[WARN] Zombie run cleanup failed: {e}")
 
     # 3. Socket.IO
     get_socketio_manager()

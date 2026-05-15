@@ -53,15 +53,14 @@ async def create_manual_session(
         session_id = await db_ops.create_manual_session(
             run_id=run_id,
             name=request.name,
-            description=request.description
+            description=request.description or ""
         )
         step("Manual session created", session_id=session_id)
         
-        # If initial_payload is provided, process it as the first turn's input
-        if request.initial_payload:
+        # If initial_payload contains a prompt, fire it as the first turn
+        if request.initial_payload and request.initial_payload.get("prompt"):
             run_manager = get_run_manager()
-            # This initiates the first turn of the manual graph execution
-            tracer("Initiating first manual turn", session_id=session_id)
+            tracer("Initiating first manual turn from initial_payload", session_id=session_id)
             await run_manager.start_run(
                 run_id=run_id,
                 input_payload={**request.initial_payload, "session_id": session_id}
@@ -106,16 +105,16 @@ async def submit_manual_turn(
         }
         debug("Prepared manual turn payload", prompt_length=len(request.prompt))
         
-        # Resume the run with the new manual input
+        # Resume the run with the new manual input (creates an async task)
         run_response = await run_manager.start_run(run_id, input_payload=payload)
         step("Manual turn submitted", run_id=run_id)
-        # Fetch the latest turn_id from the session
-        last_turn = await db_ops.get_last_manual_turn_for_session(session_id)
-        turn_id = last_turn.turn_id if last_turn else run_response.get("turn_id", "unknown")
+        # The turn_id is generated inside the async task (ManualDatabaseMiddleware.before_run)
+        # which hasn't run yet at this point. The authoritative turn_id arrives via the
+        # manual_turn_completed WebSocket event. Return "pending" here as a placeholder.
         return SubmitManualTurnResponse(
             run_id=run_id,
             session_id=session_id,
-            turn_id=turn_id,
+            turn_id="pending",
             status=run_response.get("status", "running")
         )
     except HTTPException as e:

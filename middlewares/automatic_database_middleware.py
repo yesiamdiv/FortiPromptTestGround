@@ -117,7 +117,13 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
         state: SystemState, 
         run_id: str
     ) -> None:
-        """Mark run as completed in database"""
+        """
+        Mark automatic run as COMPLETED in database.
+        
+        ARCHITECTURAL BOUNDARY:
+        For automatic runs, when LangGraph reaches __end__, the entire test is over.
+        This middleware is responsible for the "Happy Path" status update to COMPLETED.
+        """
         db = get_db()
         if db is None:
             return
@@ -137,13 +143,18 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
             context = state.get("strategy_context", {})
             best_score = context.get("best_score")
             
-            await db_ops.mark_run_completed(
-                run_id,
-                final_score=final_score,
-                best_score=best_score
-            )
+            # Update database with COMPLETED status (Happy Path)
+            from datetime import datetime
+            await db_ops.update_run(run_id, {
+                "status": "completed",
+                "completed_at": datetime.utcnow().isoformat(),
+                "final_score": final_score,
+                "best_score": best_score,
+                "manual_wait_active": False,
+                "manual_input_required": None
+            })
             
-            step("Automatic run completed in database", run_id=run_id)
+            step("Automatic run marked COMPLETED in database", run_id=run_id)
             
         except Exception as e:
             err("Error in after_run", error=str(e))

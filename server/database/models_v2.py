@@ -197,7 +197,7 @@ class ManualSession(BaseModel):
     
     # Session details
     name: str = Field(..., description="User-defined name or title for the session")
-    description: str = Field(default="", description="Optional description for the session")
+    description: Optional[str] = Field(default="", description="Optional description for the session")
     
     # Status and lifecycle
     status: Literal["active", "saved", "archived"] = Field(

@@ -112,31 +112,43 @@ class RunExecutor:
         debug("Dependencies initialized", run_id=self.run_id)
 
     async def start(self, payload: Dict[str, Any]) -> SystemState:
-        """Start run execution"""
+        """
+        Start run execution.
+        
+        ARCHITECTURAL BOUNDARY - THE SAFETY NET:
+        RunExecutor is responsible ONLY for infrastructure management.
+        It sets status to RUNNING at the start, then only updates the database
+        in the "Sad Path" (crashes and cancellations):
+        - asyncio.CancelledError → STOPPED
+        - Exception → FAILED
+        
+        "Happy Path" status updates (COMPLETED for automatic, IDLE for manual)
+        are handled by the respective middlewares in their after_run hooks.
+        """
         tracer("Starting run execution", run_id=self.run_id)
         
         if self.status == RunStatus.RUNNING:
             raise RuntimeError(f"Run {self.run_id} is already running")
         
+        # Infrastructure: Set to RUNNING at start
         self.status = RunStatus.RUNNING
         await self._update_db_status(RunStatus.RUNNING)
         step("Run started")
         
         try:
+            # Let the engine execute - middlewares handle success state
             final_state = await self._run_with_controls(payload)
-            
-            if self.status == RunStatus.RUNNING:
-                self.status = RunStatus.COMPLETED
-            await self._update_db_status(self.status)
             checkpoint("Run completed successfully", run_id=self.run_id)
             return final_state
             
         except asyncio.CancelledError:
+            # Sad Path: User explicitly cancelled
             self.status = RunStatus.STOPPED
             await self._update_db_status(RunStatus.STOPPED)
             warn("Run stopped by user")
             raise
         except Exception as e:
+            # Sad Path: Catastrophic Python crash
             self.status = RunStatus.FAILED
             await self._update_db_status(RunStatus.FAILED, error=str(e))
             err(f"Run failed: {e}")
@@ -182,7 +194,17 @@ class RunExecutor:
         raise NotImplementedError("This method is deprecated. Use WorkflowEngine's middleware triggering.")
 
     async def _update_db_status(self, status: RunStatus, error: str = None):
-        """Update run status in database"""
+        """
+        Update run status in database (INFRASTRUCTURE ONLY).
+        
+        ARCHITECTURAL BOUNDARY:
+        This method is ONLY called for infrastructure states managed by RunExecutor:
+        - RUNNING: Initial state when execution starts
+        - STOPPED: User cancellation (asyncio.CancelledError)
+        - FAILED: Catastrophic Python crash (Exception)
+        
+        Business logic states (COMPLETED, IDLE) are handled by middlewares.
+        """
         debug("Updating run status in DB", run_id=self.run_id, status=status.value)
         
         db = get_db()
@@ -195,12 +217,11 @@ class RunExecutor:
         if error:
             updates["error"] = error
         
-        if status in [RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.STOPPED]:
+        # Only set completed_at for terminal failure states
+        if status in [RunStatus.FAILED, RunStatus.STOPPED]:
             updates["completed_at"] = datetime.utcnow().isoformat()
-        
-        updates["manual_wait_active"] = False
-        updates["manual_input_required"] = None
-        updates["routing_signal"] = RoutingSignals.END 
+            updates["manual_wait_active"] = False
+            updates["manual_input_required"] = None
 
         await db_ops.update_run(self.run_id, updates)
         debug("Run status updated", run_id=self.run_id, status=status.value)
@@ -284,6 +305,13 @@ class RunManager:
                 payload["description"] = description
 
             executor.task = asyncio.create_task(executor.start(payload))
+
+            # For manual runs: clean up the executor from memory when the turn completes
+            # so the next turn can create a fresh executor without hitting the RUNNING guard.
+            def _on_turn_done(fut, rid=run_id):
+                self.executors.pop(rid, None)
+            executor.task.add_done_callback(_on_turn_done)
+
             step("Run execution started", run_id=run_id)
             
             return {
@@ -342,6 +370,88 @@ class RunManager:
             run_id for run_id, executor in self.executors.items()
             if executor.status == RunStatus.RUNNING
         ]
+    
+    async def cleanup_zombie_runs(self) -> Dict[str, Any]:
+        """
+        Clean up "zombie" runs that were stuck in RUNNING during a server restart.
+        
+        ARCHITECTURAL BOUNDARY - GLOBAL LIFECYCLE:
+        This method should be called on server startup to handle runs that died
+        during a server crash/restart. It differentiates based on graph_type:
+        
+        - Automatic runs: Mark as FAILED (they were interrupted mid-loop)
+        - Manual runs: Revert to IDLE (they were just waiting for the user anyway)
+        
+        Returns:
+            Dict with cleanup statistics
+        """
+        tracer("Starting zombie run cleanup")
+        
+        db = get_db()
+        if db is None:
+            warn("Database not connected, skipping zombie cleanup")
+            return {"cleaned": 0, "failed": 0, "message": "Database not connected"}
+        
+        try:
+            db_ops = get_db_ops(db)
+            
+            # Find all runs stuck in RUNNING status
+            zombie_runs = await db.runs.find({"status": "running"}).to_list(length=None)
+            
+            if not zombie_runs:
+                step("No zombie runs found")
+                return {"cleaned": 0, "failed": 0, "message": "No zombie runs found"}
+            
+            cleaned_count = 0
+            failed_count = 0
+            
+            for run_doc in zombie_runs:
+                try:
+                    run_id = run_doc.get("run_id", str(run_doc.get("_id", "unknown")))
+                    graph_config_dict = run_doc.get("graph_config", {})
+                    
+                    # Determine graph type
+                    if isinstance(graph_config_dict, dict):
+                        graph_type = graph_config_dict.get("graph_type", "automatic")
+                    else:
+                        # Fallback if it's a Pydantic model
+                        graph_type = getattr(graph_config_dict, "graph_type", "automatic")
+                    
+                    if graph_type == "manual":
+                        # Manual run: Revert to IDLE (it was just waiting for user)
+                        await db_ops.update_run(run_id, {
+                            "status": "idle",
+                            "manual_wait_active": True,
+                            "updated_at": datetime.utcnow().isoformat(),
+                            "error": None  # Clear any previous error
+                        })
+                        step(f"Reverted manual zombie run to IDLE: {run_id}")
+                    else:
+                        # Automatic run: Mark as FAILED (it was interrupted mid-execution)
+                        await db_ops.update_run(run_id, {
+                            "status": "failed",
+                            "completed_at": datetime.utcnow().isoformat(),
+                            "error": "Server restarted during execution",
+                            "manual_wait_active": False
+                        })
+                        step(f"Marked automatic zombie run as FAILED: {run_id}")
+                    
+                    cleaned_count += 1
+                    
+                except Exception as e:
+                    err(f"Failed to clean up zombie run: {e}", run_id=run_id)
+                    failed_count += 1
+            
+            checkpoint(f"Zombie cleanup complete: {cleaned_count} cleaned, {failed_count} failed")
+            return {
+                "cleaned": cleaned_count,
+                "failed": failed_count,
+                "message": f"Successfully cleaned {cleaned_count} zombie runs"
+            }
+            
+        except Exception as e:
+            err(f"Zombie cleanup failed: {e}")
+            return {"cleaned": 0, "failed": 0, "message": f"Cleanup failed: {str(e)}"}
 
 
 _run_manager: Optional[RunManager] = None

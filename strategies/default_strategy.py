@@ -160,11 +160,11 @@ class DefaultStrategy(AttackStrategy):
                     "default": 3,
                     "minimum": 1
                 },
-                # "stop_on_success": {
-                #     "type": "boolean",
-                #     "description": "Deprecated — runs always complete all max_attempts regardless of breach.",
-                #     "default": False
-                # },
+                "stop_on_success": {
+                    "type": "boolean",
+                    "description": "Deprecated — runs always complete all max_attempts regardless of breach.",
+                    "default": False
+                },
                 "attack_prefix": {
                     "type": "string",
                     "description": "A prefix applied to all generated attacks.",
