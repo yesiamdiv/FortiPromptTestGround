@@ -126,9 +126,9 @@ class ManualAttackOrchestrator:
         self.db = db_client
         self.gw = api_gateway
         # Initialize OllamaEngine
-        self.ollama_engine = OllamaEngine(model="dolphin-mistral:7b") # Or your preferred model
+        # self.ollama_engine = OllamaEngine(model="dolphin-mistral:7b") # Or your preferred model
+        self.ollama_engine = OllamaEngine(model="huihui_ai/dolphin3-abliterated") # Or your preferred model
         self.register_routes()
-
     # ── Ensure manual run doc exists (lazy-create) ────────────────────────────
 
     async def _get_or_create_manual_run(self, run_id: str) -> ManualRunInDB:
