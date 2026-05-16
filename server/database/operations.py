@@ -4,6 +4,7 @@ Database Operations
 """
 
 from typing import Dict, Any, List, Optional
+from fastapi.encoders import jsonable_encoder
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from datetime import datetime
 import uuid
@@ -462,7 +463,6 @@ class DatabaseOperations:
         self,
         session_id: str,
         run_id: str, # Added run_id for consistency/lookup
-        state_checkpoint: SystemState,
         final_score: Optional[float] = None,
         best_score: Optional[float] = None
     ) -> bool:
@@ -471,7 +471,6 @@ class DatabaseOperations:
         """
         debug("Updating manual session state", session_id=session_id)
         updates = {
-            "state_checkpoint": state_checkpoint,
             "updated_at": datetime.utcnow().isoformat()
         }
         if final_score is not None:
@@ -575,7 +574,7 @@ class DatabaseOperations:
         evaluation_category: Optional[str] = None,
         evaluation_feedback: Optional[str] = None,
         evaluation_metadata: Optional[Dict[str, Any]] = None,
-        state_checkpoint: Optional[Dict[str, Any]] = None # Allow updating the turn's checkpoint
+        # state_checkpoint: Optional[Dict[str, Any]] = None # Allow updating the turn's checkpoint
     ) -> bool:
         """
         Update data within an existing manual turn document.
@@ -626,8 +625,8 @@ class DatabaseOperations:
             updates["evaluation_data_id"] = evaluation_id
             step("Evaluation data updated", turn_id=turn_id, score=evaluation_score)
             
-        if state_checkpoint is not None:
-            updates["state_checkpoint"] = state_checkpoint
+        # if state_checkpoint is not None:
+        #     updates["state_checkpoint"] = state_checkpoint
             
         result = await self.manual_turns.update_one(
             {"session_id": session_id, "turn_id": turn_id},

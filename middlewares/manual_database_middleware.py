@@ -155,7 +155,7 @@ class ManualDatabaseMiddleware(BaseMiddleware):
         
         ARCHITECTURAL BOUNDARY:
         For manual runs, when LangGraph reaches __end__, it only means the current turn is over.
-        This middleware is responsible for the "Happy Path" status update to IDLE with manual_wait_active=True,
+        This middleware is responsible for the "Happy Path" status update to IDLE,
         so the run is ready to accept the next user prompt.
         """
         db = get_db()
@@ -180,26 +180,25 @@ class ManualDatabaseMiddleware(BaseMiddleware):
                 session_id = context.get("session_id")
             if not session_id:
                 err("Cannot find session_id in final_state or strategy_context", run_id=run_id)
-                await db_ops.update_run(run_id, {"status": "idle", "manual_wait_active": True})
+                await db_ops.update_run(run_id, {"status": "idle"})
                 return
             
+            # Update run status to IDLE (Happy Path — turn complete, awaiting next user input)
+            from datetime import datetime
+            await db_ops.update_run(run_id, {
+                "status": "idle",
+                "updated_at": datetime.utcnow().isoformat()
+            })
+
             await db_ops.update_manual_session_state(
                 session_id=session_id,
                 run_id=run_id,
-                state_checkpoint=state,
                 final_score=final_score,
                 best_score=best_score
             )
             
-            # Update run status to IDLE with manual_wait_active (Happy Path)
-            from datetime import datetime
-            await db_ops.update_run(run_id, {
-                "status": "idle",
-                "manual_wait_active": True,
-                "updated_at": datetime.utcnow().isoformat()
-            })
-            step("Manual run turn completed, state saved, set to IDLE with manual_wait_active=True", run_id=run_id)
-            
+            step("Manual run turn completed, state saved, set to IDLE", run_id=run_id)
+
         except Exception as e:
             err("Error in after_run", error=str(e))
     
@@ -302,4 +301,3 @@ class ManualDatabaseMiddleware(BaseMiddleware):
             turn_index=iteration
         )
         debug("Evaluation saved", turn=turn_id)
-

@@ -139,7 +139,17 @@ class RunExecutor:
             # Let the engine execute - middlewares handle success state
             final_state = await self._run_with_controls(payload)
             checkpoint("Run completed successfully", run_id=self.run_id)
+            print("\n\n")
+            print(final_state)
+            print("\n\n")
+            # FIX: Update internal memory so get_run_status is accurate before cleanup
+            if self.graph_config.graph_type == "manual":
+                self.status = RunStatus.IDLE
+            else:
+                self.status = RunStatus.COMPLETED
+            
             return final_state
+        
             
         except asyncio.CancelledError:
             # Sad Path: User explicitly cancelled
@@ -220,8 +230,6 @@ class RunExecutor:
         # Only set completed_at for terminal failure states
         if status in [RunStatus.FAILED, RunStatus.STOPPED]:
             updates["completed_at"] = datetime.utcnow().isoformat()
-            updates["manual_wait_active"] = False
-            updates["manual_input_required"] = None
 
         await db_ops.update_run(self.run_id, updates)
         debug("Run status updated", run_id=self.run_id, status=status.value)
@@ -421,7 +429,6 @@ class RunManager:
                         # Manual run: Revert to IDLE (it was just waiting for user)
                         await db_ops.update_run(run_id, {
                             "status": "idle",
-                            "manual_wait_active": True,
                             "updated_at": datetime.utcnow().isoformat(),
                             "error": None  # Clear any previous error
                         })
@@ -431,8 +438,7 @@ class RunManager:
                         await db_ops.update_run(run_id, {
                             "status": "failed",
                             "completed_at": datetime.utcnow().isoformat(),
-                            "error": "Server restarted during execution",
-                            "manual_wait_active": False
+                            "error": "Server restarted during execution"
                         })
                         step(f"Marked automatic zombie run as FAILED: {run_id}")
                     

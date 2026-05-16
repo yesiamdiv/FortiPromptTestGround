@@ -138,17 +138,7 @@ async def test_zombie_cleanup_manual():
         updated_run = await db_ops.get_run(test_run_id)
         
         if updated_run.status == "idle":
-            if hasattr(updated_run, 'manual_wait_active') and updated_run.manual_wait_active:
-                result.success(f"Manual zombie run correctly reverted to IDLE with manual_wait_active=True")
-            else:
-                # Check if it's in dict form
-                if isinstance(updated_run, dict):
-                    if updated_run.get('manual_wait_active'):
-                        result.success(f"Manual zombie run correctly reverted to IDLE with manual_wait_active=True")
-                    else:
-                        result.failure(f"Run reverted to IDLE but manual_wait_active not set")
-                else:
-                    result.failure(f"Run reverted to IDLE but manual_wait_active not set")
+            result.success(f"Manual zombie run correctly reverted to IDLE")
         else:
             result.failure(f"Expected status='idle', got status='{updated_run.status}'")
         
@@ -209,10 +199,10 @@ async def test_middleware_responsibility():
         
         # Check ManualDatabaseMiddleware.after_run
         manual_source = inspect.getsource(ManualDatabaseMiddleware.after_run)
-        if ('"idle"' in manual_source or "'idle'" in manual_source) and "manual_wait_active" in manual_source:
+        if '"idle"' in manual_source or "'idle'" in manual_source:
             manual_ok = True
         else:
-            result.failure("ManualDatabaseMiddleware.after_run doesn't set status to 'idle' with manual_wait_active")
+            result.failure("ManualDatabaseMiddleware.after_run doesn't set status to 'idle'")
             return result
         
         if auto_ok and manual_ok:

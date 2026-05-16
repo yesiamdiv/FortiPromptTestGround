@@ -126,7 +126,14 @@ class ManualStrategy(AttackStrategy):
         }
 
     def route(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> str:
-        """Route decision for manual strategy. Strictly returns a string signal."""
+        """Route decision for manual strategy. Strictly returns a string signal.
+        
+        Routing logic:
+        - First pass (init → router): current_turn has no attack yet → route to ATTACK
+          so the attack/defence/eval nodes execute for this turn.
+        - Second pass (eval → router): current_turn already has an attack → route to END
+          so the graph stops and waits for the next user prompt.
+        """
         tracer("ManualStrategy.route")
         
         if "strategy_context" not in state:
@@ -135,10 +142,16 @@ class ManualStrategy(AttackStrategy):
         context = state["strategy_context"]
         iteration = context["iteration_count"] if "iteration_count" in context else 0
         
-        debug("Manual route: always END", iteration=iteration)
+        # If the current turn already has an attack, we came from eval → done with this turn.
+        current_turn = state.get("current_turn") or {}
+        attack_generated = current_turn.get("attack") is not None
         
-        # Manual mode always ends after one generation to wait for the next user input
-        return RoutingSignals.END
+        if attack_generated:
+            debug("Manual route: attack done, routing to END", iteration=iteration)
+            return RoutingSignals.END
+        else:
+            debug("Manual route: no attack yet, routing to ATTACK", iteration=iteration)
+            return RoutingSignals.ATTACK
 
     @classmethod
     def get_dependency_schema(cls) -> Dict[str, Any]:

@@ -1,12 +1,33 @@
 """State Schema for Adversarial Testing Engine"""
 
-from typing import TypedDict, Optional, Dict, Any
+from typing import Annotated, TypedDict, Optional, Dict, Any
 from datetime import datetime
 import copy
 from engine.debug_utils import debug
 
 # Import our strict Domain Models!
 from engine.domain_models import AttackPayload, DefencePayload, EvalResult
+
+
+def merge_turn_data(left: 'TurnData', right: 'TurnData') -> 'TurnData':
+    """LangGraph reducer: safely merges new node outputs into the existing turn."""
+    if not left: return right
+    if not right: return left
+    
+    merged = copy.deepcopy(left)
+    merged.update(right)
+    # Always keep the most recent timestamp
+    merged["timestamp"] = datetime.utcnow().isoformat()
+    return merged
+
+def merge_context(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, Any]:
+    """LangGraph reducer: safely merges strategy memory."""
+    if not left: return right
+    if not right: return left
+    
+    merged = copy.deepcopy(left)
+    merged.update(right)
+    return merged
 
 class TurnData(TypedDict, total=False):
     """Transient data for the current execution loop"""
@@ -20,8 +41,8 @@ class TurnData(TypedDict, total=False):
 
 class SystemState(TypedDict, total=False):
     """Complete state flowing through LangGraph"""
-    current_turn: TurnData
-    strategy_context: Dict[str, Any]
+    current_turn: Annotated[TurnData, merge_turn_data]
+    strategy_context: Annotated[Dict[str, Any], merge_context]
     routing_signal: str
     run_id: str
     payload: Dict[str, Any]
