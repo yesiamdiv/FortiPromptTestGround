@@ -19,6 +19,7 @@ from engine.registry import get_strategy_registry, get_node_registry
 from engine.provider_registry import get_provider_registry # Import provider registry
 from server.config.models import GraphConfig, AttackNodeConfig, DefenseNodeConfig, EvaluationNodeConfig # For GraphConfig validation
 from datetime import datetime
+from strategies.batch_data_manager import delete_prompts_for_run
 
 
 router = APIRouter()
@@ -124,6 +125,8 @@ async def delet_run(
     tracer("Deleting run", run_id=run_id)
     try:
         if await db_ops.delete_run(run_id):
+            # Clean up the batch prompts file on disk if it exists
+            delete_prompts_for_run(run_id)
             step("Run deleted", run_id=run_id)
             return {"message":f"{run_id} is deleted"}
         else: 

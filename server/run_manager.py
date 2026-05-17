@@ -44,6 +44,8 @@ from middlewares.manual_database_middleware import ManualDatabaseMiddleware
 from engine.debug_utils import debug, err, tracer, step, checkpoint, warn
 from middlewares.automatic_ws_middleware import AutomaticWSMiddleware
 from middlewares.manual_ws_middleware import ManualWSMiddleware
+from middlewares.batch_database_middleware import BatchDatabaseMiddleware
+from middlewares.batch_ws_middleware import BatchWSMiddleware
 
 from server.config.models import GraphConfig
 from engine.state_schema import create_initial_state, SystemState, RoutingSignals
@@ -95,6 +97,12 @@ class RunExecutor:
                 ManualWSMiddleware(get_socketio_manager()) # Use global instance
             ])
             step("Loaded manual middlewares")
+        elif config.graph_type == "batch":
+            middlewares.extend([
+                BatchDatabaseMiddleware(),
+                BatchWSMiddleware(get_socketio_manager())
+            ])
+            step("Loaded batch middlewares")
         else:  # automatic or default
             middlewares.extend([
                 AutomaticDatabaseMiddleware(),
@@ -434,13 +442,13 @@ class RunManager:
                         })
                         step(f"Reverted manual zombie run to IDLE: {run_id}")
                     else:
-                        # Automatic run: Mark as FAILED (it was interrupted mid-execution)
+                        # Automatic or batch run: Mark as FAILED (interrupted mid-execution)
                         await db_ops.update_run(run_id, {
                             "status": "failed",
                             "completed_at": datetime.utcnow().isoformat(),
                             "error": "Server restarted during execution"
                         })
-                        step(f"Marked automatic zombie run as FAILED: {run_id}")
+                        step(f"Marked zombie run as FAILED: {run_id}")
                     
                     cleaned_count += 1
                     

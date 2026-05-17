@@ -19,6 +19,7 @@ from strategies.default_strategy import DefaultStrategy
 from strategies.iterative_improvement_strategy import IterativeImprovementStrategy
 from strategies.manual_strategy import ManualStrategy # Import ManualStrategy
 from strategies.redgen_strategy import RedGenStrategy
+from strategies.batch_strategy import BatchStrategy
 
 # Import provider registry and registration function
 from engine.provider_registry import get_provider_registry, register_all_providers
@@ -122,7 +123,8 @@ def register_all_components():
     _strategy_registry.register("iterative_improvement", IterativeImprovementStrategy)
     _strategy_registry.register("redgen_attack", RedGenStrategy)
     _strategy_registry.register("manual", ManualStrategy)
-    step("Registered strategies", strategies=["default", "iterative_improvement", "manual"])
+    _strategy_registry.register("batch", BatchStrategy)
+    step("Registered strategies", strategies=["default", "iterative_improvement", "manual", "batch"])
     
     register_all_providers()
     checkpoint("All components registered")

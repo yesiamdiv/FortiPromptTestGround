@@ -178,3 +178,5 @@ pyrightconfig.json
 chroma_db
 
 .worktrees/
+
+stratagies/data/batch/

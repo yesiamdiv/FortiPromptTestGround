@@ -24,6 +24,7 @@ from engine.state_schema import SystemState, RoutingSignals, TurnData, create_in
 from engine.registry import get_node_registry, get_strategy_registry, get_provider_registry
 from server.config.models import GraphConfig, AttackNodeConfig, DefenseNodeConfig, EvaluationNodeConfig, StrategyConfig, BaseNodeConfig
 from nodes.base import BaseAdversarialNode
+from nodes.batch_wrapper_node import BatchWrapperNode
 from engine.debug_utils import debug, tracer, step, checkpoint, warn, err
 from strategies.base import AttackStrategy
 
@@ -80,10 +81,18 @@ class ConfigurableGraphBuilder:
                 config=defense_config
             )
             
-            # [FIXED]: Extract runtime_config and pass it down
-            async def defense_wrapper(state: SystemState, config: Dict[str, Any] = None) -> Dict[str, Any]:
+            # For batch graph_type: wrap the single-item node in BatchWrapperNode
+            if self.graph_config.graph_type == "batch":
+                defense_node_instance = BatchWrapperNode(config={
+                    "single_node": defense_node_instance,
+                    "role": "defence",
+                })
+                step("Wrapped defence node in BatchWrapperNode")
+            
+            # [FIXED]: Capture node instance in default arg to avoid late-binding closure bug
+            async def defense_wrapper(state: SystemState, config: Dict[str, Any] = None, _node=defense_node_instance) -> Dict[str, Any]:
                 runtime_cfg = config.get("configurable", {}) if config else {}
-                return await defense_node_instance.execute(state, runtime_cfg)
+                return await _node.execute(state, runtime_cfg)
             self.graph.add_node("defence", defense_wrapper)
             step("Added defence node", node_type=self.graph_config.defense_node_config.node_type)
 
@@ -97,10 +106,18 @@ class ConfigurableGraphBuilder:
                 config=eval_config
             )
             
-            # [FIXED]: Extract runtime_config and pass it down
-            async def eval_wrapper(state: SystemState, config: Dict[str, Any] = None) -> Dict[str, Any]:
+            # For batch graph_type: wrap the single-item node in BatchWrapperNode
+            if self.graph_config.graph_type == "batch":
+                eval_node_instance = BatchWrapperNode(config={
+                    "single_node": eval_node_instance,
+                    "role": "eval",
+                })
+                step("Wrapped eval node in BatchWrapperNode")
+            
+            # [FIXED]: Capture node instance in default arg to avoid late-binding closure bug
+            async def eval_wrapper(state: SystemState, config: Dict[str, Any] = None, _node=eval_node_instance) -> Dict[str, Any]:
                 runtime_cfg = config.get("configurable", {}) if config else {}
-                return await eval_node_instance.execute(state, runtime_cfg)
+                return await _node.execute(state, runtime_cfg)
             self.graph.add_node("eval", eval_wrapper)
             step("Added eval node", node_type=self.graph_config.evaluation_node_config.node_type)
             

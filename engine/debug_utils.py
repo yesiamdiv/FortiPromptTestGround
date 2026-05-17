@@ -9,6 +9,9 @@ from typing import Any, Optional
 # CONFIG
 # ─────────────────────────────────────────────────────────────
 
+
+DEBUG_ENABLED = False
+
 RESET = "\033[0m"
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -104,6 +107,11 @@ def debug(
     show_caller: bool = True,
     **kwargs: Any
 ) -> None:
+
+    # KILL SWITCH
+    if not DEBUG_ENABLED:
+        return
+
     _enable_windows_ansi()
 
     func_name, filename, lineno = (
