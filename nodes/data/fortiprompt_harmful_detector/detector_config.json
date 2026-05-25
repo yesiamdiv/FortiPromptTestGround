@@ -1,0 +1,12 @@
+{
+  "base_model": "distilbert-base-uncased",
+  "max_length": 256,
+  "batch_size": 64,
+  "epochs": 4,
+  "learning_rate": 2e-05,
+  "warmup_ratio": 0.1,
+  "weight_decay": 0.01,
+  "threshold": 0.5,
+  "save_dir": "/content/fortiprompt_harmful_detector",
+  "device": "cuda"
+}
