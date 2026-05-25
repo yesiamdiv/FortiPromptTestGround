@@ -131,7 +131,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-
+venv_py312
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -179,4 +179,5 @@ chroma_db
 
 .worktrees/
 
-stratagies/data/batch/
+strategies/data/batch/
+tools/scripts/

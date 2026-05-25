@@ -1,13 +1,21 @@
+"""
+Multilayer Defense Node — Multi-stage AI-powered prompt injection defense system.
 
-# Filename: multilayer_defense_node.py
+Architecture:
+- Layer 1 (Ensemble ML): BoW+LR, BoW+GB, TF-IDF+RF → Early exit gate
+- Layer 2 (BERT-BiLSTM): Deep contextual understanding + Category LR fallback
+- Layer 3 (Harmful Content Detector): Final gate for violence/weapons/abuse detection
+
+All model paths are relative to nodes/data/ directory.
+
+IMPORTANT: Uses singleton pattern to prevent repeated model loading.
+"""
 
 import os
-import sys
+import asyncio
 from pathlib import Path
 from typing import Dict, Any, Optional
-from datetime import datetime
 
-# Third-party imports for the defense logic
 import torch
 import torch.nn as nn
 import joblib
@@ -15,21 +23,14 @@ from transformers import (
     BertTokenizer, BertModel,
     AutoTokenizer, AutoModelForSequenceClassification,
 )
-from sklearn.pipeline import Pipeline # Used in layer1_ensemble
-# scikit-learn is also implicitly used by joblib.load for models trained with it.
+from sklearn.pipeline import Pipeline
 
-
-# Project-specific imports for the node interface
 from nodes.base import BaseAdversarialNode
-from engine.state_schema import SystemState, RoutingSignals, TurnData
+from nodes.llm_forwarding_mixin import LLMForwardingMixin
+from engine.state_schema import SystemState
+from engine.debug_utils import tracer, step, err
 
-# -----------------------------------------------------------------
-# CONFIG  (Adapted from final1.py)
-# All model paths are now relative to this node's 'data' directory.
-# -----------------------------------------------------------------
-# Adjust MODEL_DIR to point to our project's data directory
-# Assuming the script is in D:\Development\BE Project\AgenticTestingGround\AgenticLLMAdversarialTestbed\.worktrees\v2\nodes
-# and data is in D:\Development\BE Project\AgenticTestingGround\AgenticLLMAdversarialTestbed\.worktrees\v2\nodes\data
+# ─── CONFIG (Relative Paths) ────────────────────────────────────────
 MODEL_DIR = Path(os.path.join(os.path.dirname(__file__), "data"))
 
 BINARY_MODELS = {
@@ -41,33 +42,93 @@ VECTORIZER_PATH  = MODEL_DIR / "vectorizer.pkl"
 CATEGORY_LR_PATH = MODEL_DIR / "category_model.pkl"
 CATEGORY_LE_PATH = MODEL_DIR / "label_encoder.pkl"
 
-# BERT and Harmful Detector paths, now relative to MODEL_DIR.
-# If these files were not explicitly copied to nodes/data, their loading will fail.
 BERT_CKPT_PATH        = MODEL_DIR / "fortiprompt_bert_rnn.pt"
-BERT_LE_PATH          = MODEL_DIR / "bert_label_encoder.pkl" # Renamed for clarity if different from CATEGORY_LE_PATH
-HARMFUL_DETECTOR_DIR  = MODEL_DIR / "fortiprompt_harmful_detector" # This should be a directory within nodes/data
+BERT_LE_PATH          = MODEL_DIR / "bert_label_encoder.pkl"
+HARMFUL_DETECTOR_DIR  = MODEL_DIR / "fortiprompt_harmful_detector"
 
-HARMFUL_LABEL_MAP     = {0: "BENIGN", 1: "MALICIOUS"} # CLASS_1 = malicious (confirmed)
+HARMFUL_LABEL_MAP     = {0: "BENIGN", 1: "MALICIOUS"}
 HARMFUL_MALICIOUS_IDS = {1}
 
-# Decision thresholds
-ENSEMBLE_VOTE_THRESHOLD = 2     # votes needed out of 3 to flag
-BERT_OVERRIDE_CONF      = 0.85  # BERT treated as high-confidence above this
-BERT_MEDIUM_CONF        = 0.60  # BERT flag accepted at medium confidence
-BERT_CATEGORY_CONF      = 0.80  # use BERT category above this, else LR
-HARMFUL_CONF_THRESHOLD  = 0.75  # harmful detector blocks above this
+# Decision thresholds (configurable via node_params)
+DEFAULT_ENSEMBLE_VOTE_THRESHOLD = 2
+DEFAULT_BERT_OVERRIDE_CONF      = 0.85
+DEFAULT_BERT_MEDIUM_CONF        = 0.60
+DEFAULT_BERT_CATEGORY_CONF      = 0.80
+DEFAULT_HARMFUL_CONF_THRESHOLD  = 0.75
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-# -----------------------------------------------------------------
-# BERT-RNN MODEL DEFINITION (Copied from final1.py)
-# -----------------------------------------------------------------
+# ─── SINGLETON DEFENSE SYSTEM ────────────────────────────────────────
+_defense_system_instance: Optional['DefenseSystem'] = None
+_defense_system_lock = asyncio.Lock()  # For thread-safe initialization
+
+
+async def get_defense_system(
+    ensemble_vote_threshold: int = DEFAULT_ENSEMBLE_VOTE_THRESHOLD,
+    bert_override_conf: float = DEFAULT_BERT_OVERRIDE_CONF,
+    bert_medium_conf: float = DEFAULT_BERT_MEDIUM_CONF,
+    bert_category_conf: float = DEFAULT_BERT_CATEGORY_CONF,
+    harmful_conf_threshold: float = DEFAULT_HARMFUL_CONF_THRESHOLD
+) -> 'DefenseSystem':
+    """
+    Get or create the singleton DefenseSystem instance.
+    Thread-safe lazy initialization using asyncio.Lock.
+    
+    This prevents models from being loaded multiple times, which was causing
+    the application to freeze when API endpoints were called.
+    """
+    global _defense_system_instance
+    
+    if _defense_system_instance is not None:
+        # Instance exists, just update thresholds if needed
+        _defense_system_instance.ENSEMBLE_VOTE_THRESHOLD = ensemble_vote_threshold
+        _defense_system_instance.BERT_OVERRIDE_CONF = bert_override_conf
+        _defense_system_instance.BERT_MEDIUM_CONF = bert_medium_conf
+        _defense_system_instance.BERT_CATEGORY_CONF = bert_category_conf
+        _defense_system_instance.HARMFUL_CONF_THRESHOLD = harmful_conf_threshold
+        return _defense_system_instance
+    
+    # Need to create instance - acquire lock
+    async with _defense_system_lock:
+        # Double-check after acquiring lock (prevent race condition)
+        if _defense_system_instance is not None:
+            _defense_system_instance.ENSEMBLE_VOTE_THRESHOLD = ensemble_vote_threshold
+            _defense_system_instance.BERT_OVERRIDE_CONF = bert_override_conf
+            _defense_system_instance.BERT_MEDIUM_CONF = bert_medium_conf
+            _defense_system_instance.BERT_CATEGORY_CONF = bert_category_conf
+            _defense_system_instance.HARMFUL_CONF_THRESHOLD = harmful_conf_threshold
+            return _defense_system_instance
+        
+        # Create the singleton instance
+        print("\n" + "="*70)
+        print("[DefenseSystem]  Initializing singleton instance (ONE-TIME LOAD)")
+        print("="*70)
+        _defense_system_instance = DefenseSystem(
+            binary_models_paths=BINARY_MODELS,
+            vectorizer_path=VECTORIZER_PATH,
+            category_lr_path=CATEGORY_LR_PATH,
+            category_le_path=CATEGORY_LE_PATH,
+            bert_ckpt_path=BERT_CKPT_PATH,
+            bert_le_path=BERT_LE_PATH,
+            harmful_detector_dir=HARMFUL_DETECTOR_DIR,
+            ensemble_vote_threshold=ensemble_vote_threshold,
+            bert_override_conf=bert_override_conf,
+            bert_medium_conf=bert_medium_conf,
+            bert_category_conf=bert_category_conf,
+            harmful_conf_threshold=harmful_conf_threshold,
+            device=DEVICE
+        )
+        print("[DefenseSystem]  Singleton ready - subsequent calls will reuse this instance")
+        print("="*70 + "\n")
+        return _defense_system_instance
+
+
+# ─── BERT-RNN MODEL ─────────────────────────────────────────────────
 class BertRNNClassifier(nn.Module):
     def __init__(self, model_name, num_classes, rnn_type="LSTM",
                  hidden_size=128, num_layers=2, bidirectional=True, dropout=0.3):
         super().__init__()
-        # model_name here typically refers to a pre-trained BERT model name like 'bert-base-uncased'
         self.bert          = BertModel.from_pretrained(model_name)
         self.rnn_type      = rnn_type.upper()
         self.bidirectional = bidirectional
@@ -102,10 +163,7 @@ class BertRNNClassifier(nn.Module):
         return self.fc(self.dropout(hidden))
 
 
-# -----------------------------------------------------------------
-# DEFENSE SYSTEM (Copied and modified from final1.py)
-# Now accepts model paths in __init__ for better configurability
-# -----------------------------------------------------------------
+# ─── DEFENSE SYSTEM ─────────────────────────────────────────────────
 class DefenseSystem:
     def __init__(self, binary_models_paths: Dict[str, Path], vectorizer_path: Path,
                  category_lr_path: Path, category_le_path: Path,
@@ -114,7 +172,7 @@ class DefenseSystem:
                  ensemble_vote_threshold: int, bert_override_conf: float,
                  bert_medium_conf: float, bert_category_conf: float,
                  harmful_conf_threshold: float, device: torch.device):
-        print("🔄  Loading models for DefenseSystem...")
+        print("  Loading models for DefenseSystem...")
 
         self.device = device
 
@@ -124,9 +182,9 @@ class DefenseSystem:
             self.category_lr      = joblib.load(str(category_lr_path))
             self.label_encoder_lr = joblib.load(str(category_le_path))
             self.binary_models    = {n: joblib.load(str(p)) for n, p in binary_models_paths.items()}
-            print(f"  ✅ [L1] Ensemble models loaded ({list(self.binary_models.keys())})")
+            print(f"   [L1] Ensemble models loaded ({list(self.binary_models.keys())})")
         except Exception as e:
-            print(f"  ❌ [L1] Failed to load ensemble models: {e}. Layer 1 will be unavailable.")
+            print(f"   [L1] Failed to load ensemble models: {e}. Layer 1 will be unavailable.")
             self.vectorizer = None
             self.category_lr = None
             self.label_encoder_lr = None
@@ -156,11 +214,11 @@ class DefenseSystem:
                 self.bert_tokenizer     = BertTokenizer.from_pretrained(cfg["model_name"])
                 self.label_encoder_bert = joblib.load(str(bert_le_path))
                 self.bert_available     = True
-                print(f"  ✅ [L2] BERT-BiLSTM      loaded  | classes: {list(self.label_encoder_bert.classes_)}")
+                print(f"   [L2] BERT-BiLSTM      loaded  | classes: {list(self.label_encoder_bert.classes_)}")
             except Exception as e:
-                print(f"  ⚠️  [L2] BERT-BiLSTM failed: {e} → LR-only mode")
+                print(f"    [L2] BERT-BiLSTM failed: {e} → LR-only mode")
         else:
-            print(f"  ⚠️  [L2] BERT checkpoint or label encoder not found → LR-only mode")
+            print(f"    [L2] BERT checkpoint or label encoder not found → LR-only mode")
 
         # L3 — Harmful Content Detector
         self.harmful_tokenizer = None
@@ -174,11 +232,11 @@ class DefenseSystem:
                                              str(harmful_detector_dir)).to(self.device)
                 self.harmful_model.eval()
                 self.harmful_available = True
-                print(f"  ✅ [L3] Harmful Detector loaded  ({harmful_detector_dir.name})")
+                print(f"  [L3] Harmful Detector loaded  ({harmful_detector_dir.name})")
             except Exception as e:
-                print(f"  ⚠️  [L3] Harmful Detector failed: {e}")
+                print(f"  [L3] Harmful Detector failed: {e}")
         else:
-            print(f"  ⚠️  [L3] Harmful Detector directory not found at {harmful_detector_dir}")
+            print(f"  [L3] Harmful Detector directory not found at {harmful_detector_dir}")
 
         # Store thresholds
         self.ENSEMBLE_VOTE_THRESHOLD = ensemble_vote_threshold
@@ -187,367 +245,339 @@ class DefenseSystem:
         self.BERT_CATEGORY_CONF      = bert_category_conf
         self.HARMFUL_CONF_THRESHOLD  = harmful_conf_threshold
 
-        print(f"\n  🖥️  Device : {self.device}")
-        print(f"  🛡️  Layers : L1=Ensemble → L2=BERT+LR → L3=HarmfulDetector [final gate]")
-        print(f"✅  DefenseSystem ready.\n")
+        print(f"\n  Device : {self.device}")
+        print(f"  Layers : L1=Ensemble → L2=BERT+LR → L3=HarmfulDetector [final gate]")
+        print(f"  DefenseSystem ready.\n")
 
     # ── Layer 1: Ensemble ML ──────────────────────────────────────
     def layer1_ensemble(self, text):
         if not self.vectorizer or not self.binary_models:
-            return 0, 0.0, [], None # If models failed to load, return benign
+            return {"verdict": None, "votes": 0, "category": None}
 
-        clean = text.lower().strip()
-        X     = self.vectorizer.transform([clean])
-        preds = []
+        vec = self.vectorizer.transform([text])
+        votes = sum(clf.predict(vec)[0] == 1 for clf in self.binary_models.values())
+        verdict = "MALICIOUS" if votes >= self.ENSEMBLE_VOTE_THRESHOLD else "BENIGN"
 
-        for name, model in self.binary_models.items():
-            inp = [clean] if isinstance(model, Pipeline) else X
+        category = None
+        if self.category_lr and self.label_encoder_lr:
             try:
-                pred = int(model.predict(inp)[0])
-                prob = float(model.predict_proba(inp)[0][1])
-            except Exception: # Fallback for models that might not have predict_proba or other issues
-                pred = int(model.predict(inp)[0])
-                prob = 0.5
-            preds.append({"name": name, "pred": pred, "conf": prob})
+                cat_pred = self.category_lr.predict(vec)[0]
+                category = self.label_encoder_lr.inverse_transform([cat_pred])[0]
+            except:
+                pass
 
-        votes    = sum(r["pred"] for r in preds)
-        flag     = 1 if votes >= self.ENSEMBLE_VOTE_THRESHOLD else 0
-        avg_conf = sum(r["conf"] for r in preds) / len(preds) if preds else 0.0
-        return flag, avg_conf, preds, X
+        return {"verdict": verdict, "votes": votes, "category": category}
 
     # ── Layer 2: BERT-BiLSTM ──────────────────────────────────────
     def layer2_bert(self, text):
         if not self.bert_available:
-            return None
+            return self._layer2_fallback_lr(text)
 
-        inputs = self.bert_tokenizer(
-            text, return_tensors="pt", truncation=True,
-            padding=True, max_length=128,
-        ).to(self.device)
+        try:
+            enc = self.bert_tokenizer(
+                text, return_tensors="pt", padding=True,
+                truncation=True, max_length=512
+            )
+            enc = {k: v.to(self.device) for k, v in enc.items()}
 
-        with torch.no_grad():
-            logits = self.bert_model(inputs["input_ids"], inputs["attention_mask"])
-            probs  = torch.softmax(logits, dim=1)
+            with torch.no_grad():
+                logits = self.bert_model(enc["input_ids"], enc["attention_mask"])
+                probs = torch.softmax(logits, dim=1)[0]
+                pred_idx = torch.argmax(probs).item()
+                conf = probs[pred_idx].item()
 
-        idx   = torch.argmax(probs, dim=1).item()
-        conf  = probs[0][idx].item()
-        label = self.label_encoder_bert.inverse_transform([idx])[0]
+            pred_label = self.label_encoder_bert.inverse_transform([pred_idx])[0]
+            verdict = "BENIGN" if pred_label == "benign" else "MALICIOUS"
 
-        return {
-            "malicious" : 0 if label.lower() == "benign" else 1,
-            "confidence": conf,
-            "category"  : label,
-            "all_probs" : {
-                cls: round(probs[0][i].item(), 4)
-                for i, cls in enumerate(self.label_encoder_bert.classes_)
-            },
-        }
-
-    # ── Layer 2b: Category LR (support) ──────────────────────────
-    def layer2_category_lr(self, X, bert_res):
-        """
-        BERT is primary; LR is fallback when BERT is uncertain.
-        Always called after L2 to resolve category before L3.
-        """
-        if self.category_lr is None or self.label_encoder_lr is None:
-            return "unknown", "N/A", 0.0 # Fallback if LR models failed to load
-
-        lr_probs = self.category_lr.predict_proba(X)[0]
-        lr_idx   = lr_probs.argmax()
-        lr_cat   = self.label_encoder_lr.inverse_transform([lr_idx])[0]
-        lr_conf  = float(lr_probs[lr_idx])
-
-        if bert_res and bert_res["confidence"] >= self.BERT_CATEGORY_CONF:
-            return bert_res["category"], "BERT", bert_res["confidence"]
-        return lr_cat, "LR", lr_conf
-
-    # ── Layer 3: Harmful Content Detector ────────────────────────
-    def layer3_harmful(self, text):
-        """
-        Final gate — only reached when L1+L2 both passed.
-        Catches harmful intent: violence, weapons, abuse, self-harm.
-        """
-        if not self.harmful_available:
-            return None
-
-        inputs = self.harmful_tokenizer(
-            text, return_tensors="pt", truncation=True,
-            padding=True, max_length=512,
-        ).to(self.device)
-
-        with torch.no_grad():
-            probs = torch.softmax(self.harmful_model(**inputs).logits, dim=-1)[0]
-
-        pred_id = probs.argmax().item()
-        conf    = probs[pred_id].item()
-        label   = HARMFUL_LABEL_MAP.get(pred_id, f"CLASS_{pred_id}")
-
-        return {
-            "malicious" : pred_id in HARMFUL_MALICIOUS_IDS,
-            "label"     : label,
-            "confidence": conf,
-            "all_scores": {
-                HARMFUL_LABEL_MAP.get(i, f"CLASS_{i}"): round(p.item(), 4)
-                for i, p in enumerate(probs)
-            },
-        }
-
-    # ── Full Cascading Pipeline ───────────────────────────────────
-    def predict(self, text):
-        result = {
-            "text"            : text,
-            "malicious"       : False,
-            "category"        : "benign",
-            "blocked_at"      : None,
-            "decision_source" : None,
-            "l2_flagged"      : False,
-            "l2_decision_src" : None,
-            "layer1"          : None,
-            "layer2"          : None,
-            "layer2_cat"      : None,
-            "layer3"          : None,
-        }
-
-        # ── Layer 1 — early exit gate ─────────────────────────────
-        l1_flag, l1_conf, l1_preds, X = self.layer1_ensemble(text)
-        result["layer1"] = {
-            "flag"    : l1_flag,
-            "avg_conf": l1_conf,
-            "models"  : l1_preds,
-        }
-
-        if l1_flag:
-            # Hard stop — but run L2 for category resolution only
-            bert_res = self.layer2_bert(text)
-            category, cat_source, cat_conf = self.layer2_category_lr(X, bert_res)
-
-            result["malicious"]       = True
-            result["blocked_at"]      = "Layer 1 (Ensemble ML)"
-            result["decision_source"] = "ENSEMBLE"
-            result["category"]        = category if category.lower() != "benign" else "prompt_injection"
-            result["layer2"]          = bert_res
-            result["layer2_cat"]      = {
-                "category": category,
-                "source"  : cat_source,
-                "conf"    : cat_conf,
+            return {
+                "verdict": verdict,
+                "confidence": conf,
+                "category": pred_label,
+                "source": "BERT"
             }
+        except Exception as e:
+            print(f"   BERT inference failed: {e}, falling back to LR")
+            return self._layer2_fallback_lr(text)
+
+    def _layer2_fallback_lr(self, text):
+        if not self.vectorizer or not self.category_lr or not self.label_encoder_lr:
+            return {"verdict": None, "confidence": 0.0, "category": None, "source": "NONE"}
+
+        vec = self.vectorizer.transform([text])
+        pred = self.category_lr.predict(vec)[0]
+        proba = self.category_lr.predict_proba(vec)[0]
+        conf = float(max(proba))
+        category = self.label_encoder_lr.inverse_transform([pred])[0]
+        verdict = "BENIGN" if category == "benign" else "MALICIOUS"
+
+        return {
+            "verdict": verdict,
+            "confidence": conf,
+            "category": category,
+            "source": "LR"
+        }
+
+    # ── Layer 3: Harmful Content Detector ─────────────────────────
+    def layer3_harmful(self, text):
+        if not self.harmful_available:
+            return {"verdict": None, "confidence": 0.0}
+
+        try:
+            enc = self.harmful_tokenizer(
+                text, return_tensors="pt", padding=True,
+                truncation=True, max_length=512
+            )
+            enc = {k: v.to(self.device) for k, v in enc.items()}
+
+            with torch.no_grad():
+                outputs = self.harmful_model(**enc)
+                probs = torch.softmax(outputs.logits, dim=1)[0]
+                pred_idx = torch.argmax(probs).item()
+                conf = probs[pred_idx].item()
+
+            verdict = HARMFUL_LABEL_MAP.get(pred_idx, "UNKNOWN")
+            return {"verdict": verdict, "confidence": conf}
+        except Exception as e:
+            print(f"   Harmful detector failed: {e}")
+            return {"verdict": None, "confidence": 0.0}
+
+    # ── Main Prediction Pipeline ──────────────────────────────────
+    def predict(self, text: str) -> Dict[str, Any]:
+        """
+        Execute the multi-layer defense pipeline.
+        
+        Returns a dict with:
+        - blocked_at: str or None (which layer blocked)
+        - decision_source: str (reason for decision)
+        - category: str (attack category)
+        - confidence: float (0-1)
+        - is_malicious: bool
+        - l1_verdict, l2_verdict, l3_verdict: layer details
+        """
+        result = {
+            "blocked_at": None,
+            "decision_source": None,
+            "category": "unknown",
+            "confidence": 0.0,
+            "l1_verdict": None,
+            "l2_verdict": None,
+            "l3_verdict": None,
+        }
+
+        # ── Layer 1 ───────────────────────────────────────────────
+        l1 = self.layer1_ensemble(text)
+        result["l1_verdict"] = l1
+
+        if l1["verdict"] == "BENIGN":
+            result["decision_source"] = "L1_ENSEMBLE_BENIGN"
+            result["category"] = l1.get("category", "benign")
             return result
 
-        # ── Layer 2 — contextual detection, no early block ────────
-        # Runs fully: detects + resolves category, passes flag to L3
-        bert_res = self.layer2_bert(text)
-        result["layer2"] = bert_res
+        # ── Layer 2 ───────────────────────────────────────────────
+        l2 = self.layer2_bert(text)
+        result["l2_verdict"] = l2
 
-        l2_flag         = False
-        decision_source = "ENSEMBLE_ONLY" # Default if BERT not available or low conf
-
-        if bert_res:
-            if bert_res["confidence"] >= self.BERT_OVERRIDE_CONF:
-                l2_flag         = bool(bert_res["malicious"])
-                decision_source = "BERT"
-            elif bert_res["confidence"] >= self.BERT_MEDIUM_CONF:
-                l2_flag         = bool(bert_res["malicious"])
-                decision_source = "BERT+ENSEMBLE"
-
-        # Record L2 flag — does NOT block here, hands off to L3
-        result["l2_flagged"]      = l2_flag
-        result["l2_decision_src"] = decision_source
-
-        # Resolve category from L2 before entering L3
-        # L3 uses this regardless of what it decides
-        category, cat_source, cat_conf = self.layer2_category_lr(X, bert_res)
-        result["layer2_cat"] = {
-            "category": category,
-            "source"  : cat_source,
-            "conf"    : cat_conf,
-        }
-
-        # ── Layer 3 — final gate ──────────────────────────────────
-        # Compulsory when L1+L2 both passed (no early block from either)
-        harmful_res = self.layer3_harmful(text)
-        result["layer3"] = harmful_res
-
-        harmful_flagged = (
-            harmful_res is not None
-            and harmful_res["malicious"]
-            and harmful_res["confidence"] >= self.HARMFUL_CONF_THRESHOLD
-        )
-
-        if l2_flag or harmful_flagged:
-            # Determine precise block attribution
-            if l2_flag and harmful_flagged:
-                blocked_at = "Layer 2+3 (BERT + Harmful Detector)"
-            elif l2_flag:
-                blocked_at = "Layer 2 (BERT-BiLSTM)"
+        # High confidence BERT override
+        if l2["confidence"] >= self.BERT_OVERRIDE_CONF:
+            if l2["verdict"] == "BENIGN":
+                result["decision_source"] = "L2_BERT_HIGH_CONFIDENCE_OVERRIDE"
+                result["category"] = l2.get("category", "benign")
+                result["confidence"] = l2["confidence"]
+                return result
             else:
-                blocked_at = "Layer 3 (Harmful Detector)"
+                result["blocked_at"] = "L2_BERT"
+                result["decision_source"] = "L2_BERT_HIGH_CONFIDENCE_BLOCK"
+                result["category"] = l2.get("category", "malicious")
+                result["confidence"] = l2["confidence"]
+                return result
 
-            # Category from L2 resolution; fallback label if benign-tagged
-            final_category = category if category.lower() != "benign" else "harmful_content"
+        # Medium confidence + L1 agreement
+        if l2["confidence"] >= self.BERT_MEDIUM_CONF:
+            if l2["verdict"] == "MALICIOUS" and l1["verdict"] == "MALICIOUS":
+                result["blocked_at"] = "L2_BERT+L1_AGREEMENT"
+                result["decision_source"] = "L2_BERT_MEDIUM_CONFIDENCE_WITH_L1"
+                category = (
+                    l2.get("category")
+                    if l2["confidence"] >= self.BERT_CATEGORY_CONF
+                    else l1.get("category", "malicious")
+                )
+                result["category"] = category
+                result["confidence"] = l2["confidence"]
+                return result
 
-            result["malicious"]       = True
-            result["blocked_at"]      = blocked_at
-            result["decision_source"] = decision_source
-            result["category"]        = final_category
+        # Low confidence -> use L1
+        if l1["verdict"] == "MALICIOUS":
+            # Before blocking, check L3
+            pass
+        else:
+            result["decision_source"] = "L1_AND_L2_BENIGN"
+            result["category"] = l2.get("category", "benign")
+            result["confidence"] = l2["confidence"]
+            return result
+
+        # ── Layer 3 (Final Gate) ──────────────────────────────────
+        l3 = self.layer3_harmful(text)
+        result["l3_verdict"] = l3
+
+        if l3["verdict"] == "MALICIOUS" and l3["confidence"] >= self.HARMFUL_CONF_THRESHOLD:
+            result["blocked_at"] = "L3_HARMFUL_DETECTOR"
+            result["decision_source"] = "L3_HARMFUL_CONTENT"
+            result["category"] = l2.get("category", "harmful_content")
+            result["confidence"] = l3["confidence"]
             return result
 
         # ── All layers passed → ALLOW ─────────────────────────────
         result["decision_source"] = "ALL_LAYERS_PASSED"
+        result["category"] = l2.get("category", "benign")
+        result["confidence"] = max(l2.get("confidence", 0), l3.get("confidence", 0))
         return result
 
 
-# -----------------------------------------------------------------
-# MULTILAYER DEFENSE NODE (Our project's interface)
-# -----------------------------------------------------------------
-class MultilayerDefenseNode(BaseAdversarialNode):
+# ─── NODE CLASS ─────────────────────────────────────────────────────
+class MultilayerDefenseNode(LLMForwardingMixin, BaseAdversarialNode):
     def __init__(self, config: Dict[str, Any]):
-        # BaseAdversarialNode expects config, which might contain name and node_configs
         super().__init__(config=config)
-        
-        # Extract name and node_configs if they are part of the config
+
         self.name = config.get('name', self.__class__.__name__)
-        self.node_configs = config.get('node_configs', {})
+        node_params = config.get("node_params", {})
         
+        # Initialize LLM forwarding
+        self._init_llm_forwarding(node_params)
+        
+        # Extract thresholds from config
+        self.ensemble_vote_threshold = node_params.get("ensemble_vote_threshold", DEFAULT_ENSEMBLE_VOTE_THRESHOLD)
+        self.bert_override_conf      = node_params.get("bert_override_conf", DEFAULT_BERT_OVERRIDE_CONF)
+        self.bert_medium_conf        = node_params.get("bert_medium_conf", DEFAULT_BERT_MEDIUM_CONF)
+        self.bert_category_conf      = node_params.get("bert_category_conf", DEFAULT_BERT_CATEGORY_CONF)
+        self.harmful_conf_threshold  = node_params.get("harmful_conf_threshold", DEFAULT_HARMFUL_CONF_THRESHOLD)
+        
+        # Defense system will be lazily initialized in execute()
         self.defense_system: Optional[DefenseSystem] = None
-        self.initialize_defense_system()
+        self._initialization_complete = False
 
-    def initialize_defense_system(self):
-        """Initializes the DefenseSystem with models from the nodes/data directory."""
-        print(f"🔄  Initializing Multilayer Defense System for node: {self.name}...")
-
-        # Check if essential Layer 1 models exist
-        missing_l1_models = []
-        if not VECTORIZER_PATH.exists(): missing_l1_models.append(f"vectorizer.pkl (expected at {VECTORIZER_PATH})")
-        if not CATEGORY_LR_PATH.exists(): missing_l1_models.append(f"category_model.pkl (expected at {CATEGORY_LR_PATH})")
-        if not CATEGORY_LE_PATH.exists(): missing_l1_models.append(f"label_encoder.pkl (expected at {CATEGORY_LE_PATH})")
-        for name, p in BINARY_MODELS.items():
-            if not p.exists():
-                missing_l1_models.append(f"{str(p.name)} (expected at {p})")
-
-        if missing_l1_models:
-            print(f"  ⚠️  Missing Layer 1 models: {'; '.join(missing_l1_models)}. Layer 1 defense may be unavailable.")
+    async def initialize_defense_system(self):
+        """Lazy initialization of defense system - gets singleton instance."""
+        if self._initialization_complete:
+            return
         
-        # BERT models check
-        missing_bert_models = []
-        if not BERT_CKPT_PATH.exists(): missing_bert_models.append(f"BERT checkpoint (expected at {BERT_CKPT_PATH})")
-        if not BERT_LE_PATH.exists(): missing_bert_models.append(f"BERT label encoder (expected at {BERT_LE_PATH})")
-        if missing_bert_models:
-            print(f"  ⚠️  Missing BERT models: {'; '.join(missing_bert_models)}. BERT-BiLSTM defense may be unavailable.")
-
-        # Harmful Detector models check
-        missing_harmful_detector = []
-        if not HARMFUL_DETECTOR_DIR.exists(): missing_harmful_detector.append(f"Harmful Detector directory (expected at {HARMFUL_DETECTOR_DIR})")
-        if missing_harmful_detector:
-            print(f"  ⚠️  Missing Harmful Detector: {'; '.join(missing_harmful_detector)}. Harmful Content Detector defense may be unavailable.")
-
-
+        tracer(f"Getting DefenseSystem singleton for: {self.name}")
+        
         try:
-            self.defense_system = DefenseSystem(
-                binary_models_paths = BINARY_MODELS,
-                vectorizer_path = VECTORIZER_PATH,
-                category_lr_path = CATEGORY_LR_PATH,
-                category_le_path = CATEGORY_LE_PATH,
-                bert_ckpt_path = BERT_CKPT_PATH,
-                bert_le_path = BERT_LE_PATH,
-                harmful_detector_dir = HARMFUL_DETECTOR_DIR,
-                ensemble_vote_threshold = ENSEMBLE_VOTE_THRESHOLD,
-                bert_override_conf = BERT_OVERRIDE_CONF,
-                bert_medium_conf = BERT_MEDIUM_CONF,
-                bert_category_conf = BERT_CATEGORY_CONF,
-                harmful_conf_threshold = HARMFUL_CONF_THRESHOLD,
-                device = DEVICE
+            self.defense_system = await get_defense_system(
+                ensemble_vote_threshold=self.ensemble_vote_threshold,
+                bert_override_conf=self.bert_override_conf,
+                bert_medium_conf=self.bert_medium_conf,
+                bert_category_conf=self.bert_category_conf,
+                harmful_conf_threshold=self.harmful_conf_threshold
             )
-            print(f"✅  Multilayer Defense System for {self.name} ready.\n")
-
+            self._log_capability_summary()
+            self._initialization_complete = True
+            
         except Exception as e:
-            print(f"❌  An error occurred during DefenseSystem initialization for {self.name}: {e}")
-            self.defense_system = None # Ensure it's None if initialization fails
-
-        # Print once at startup — not on every execute() call
-        self._log_capability_summary()
+            err(f"DefenseSystem singleton retrieval failed: {e}")
+            self.defense_system = None
+            self._initialization_complete = False
 
     def _log_capability_summary(self):
-        """Print a clear summary of which defense layers are actually loaded."""
         if self.defense_system is None:
             print(f"[MultilayerDefense:{self.name}] OFFLINE — defense system failed to initialise.")
             return
 
         ds = self.defense_system
-        layers = []
-
         l1_ok = bool(ds.vectorizer and ds.binary_models)
         l2_ok = getattr(ds, "bert_available", False)
         l3_ok = getattr(ds, "harmful_available", False)
 
-        layers.append(f"L1-Ensemble={'OK (' + ','.join(ds.binary_models.keys()) + ')' if l1_ok else 'MISSING — ensure BoW/TF-IDF joblib files are in nodes/data/'}")
-        layers.append(f"L2-BERT={'OK' if l2_ok else 'SKIPPED — place fortiprompt_bert_rnn.pt + bert_label_encoder.pkl in nodes/data/'}")
-        layers.append(f"L3-HarmfulDetector={'OK' if l3_ok else 'SKIPPED — place fortiprompt_harmful_detector/ dir in nodes/data/'}")
+        layers = []
+        layers.append(f"L1-Ensemble={'OK (' + ','.join(ds.binary_models.keys()) + ')' if l1_ok else 'MISSING'}")
+        layers.append(f"L2-BERT={'OK' if l2_ok else 'SKIPPED'}")
+        layers.append(f"L3-HarmfulDetector={'OK' if l3_ok else 'SKIPPED'}")
 
         active_count = sum([l1_ok, l2_ok, l3_ok])
         status = "FULL" if active_count == 3 else f"PARTIAL ({active_count}/3 layers)"
         print(f"[MultilayerDefense:{self.name}] {status}")
         for layer in layers:
             print(f"  {layer}")
-        if active_count < 3:
-            print(f"  NOTE: Missing layers are skipped gracefully — the node still runs but with reduced accuracy.")
 
     async def execute(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
-        """
-        Processes the input data through the multilayer defense pipeline.
-        Retrieves input from state and returns updated state.
-        """
-        if runtime_config is None: runtime_config = {}
+        if runtime_config is None:
+            runtime_config = {}
+
+        # Lazy initialization of defense system
+        if not self._initialization_complete:
+            await self.initialize_defense_system()
 
         if self.defense_system is None:
-            print(f"Error: Defense System not initialized for node {self.name}. Cannot process input.")
-            # Fail gracefully with a Domain Model
             from engine.domain_models import create_defence_response
             error_defence = create_defence_response("Defense system not initialized", status_code=500)
             return {"current_turn": {"defence": error_defence, "node_name": self.name}}
             
-        print(f"🚀 Executing Multilayer Defense node: {self.name}")
+        tracer(f"Executing Multilayer Defense: {self.name}")
         
-        # --- 1. STRICT STATE ACCESS & DOMAIN MODELS ---
+        # STRICT STATE ACCESS
         if "current_turn" not in state:
             raise ValueError("Corrupted state: Missing 'current_turn'.")
             
         current_turn = state["current_turn"]
-        attack = current_turn["attack"] if "attack" in current_turn else None
+        attack = current_turn.get("attack")
         
-        input_prompt = ""
-        if attack:
-            # Use the Domain Model's built-in conversion!
-            input_prompt = attack.to_string()
+        input_prompt = attack.to_string() if attack else ""
 
         if not input_prompt:
-            print("Warning: Could not find input prompt in state. Using empty string for defense.")
+            print("Warning: No input prompt found in state.")
 
         try:
-            # --- 2. RUN ML PREDICTION ---
+            # Run ML prediction
             result = self.defense_system.predict(input_prompt)
-            print("✅ Defense pipeline executed successfully.")
+            step("Defense pipeline executed successfully")
             
-            # --- 3. CONVERT TO DOMAIN MODEL ---
-            # We must map the ML dictionary into a strict DefencePayload so the Strategies can read it
-            is_malicious = result.get("malicious", False)
-            status_code = 403 if is_malicious else 200
-            
-            # Provide a generic text response, and stuff all the juicy ML data into the metadata
-            response_text = "Request denied by AI Defense System." if is_malicious else "Request processed successfully."
+            # Determine final allow/block decision based on layer verdicts
+            blocked_at = result.get("blocked_at")
+            is_blocked = blocked_at is not None
+
+            status_code = 403 if is_blocked else 200
+
+            # Extract additional info for display
+            category = result.get("category", "unknown")
+            confidence = result.get("confidence", 0.0)
+            decision_source = result.get("decision_source", "unknown")
+
+            # Build user-friendly response text with emojis
+            if is_blocked:
+                response_text = f"Request blocked by {blocked_at}\n"
+                response_text += f"Category: {category}\n"
+                response_text += f"Confidence: {confidence:.2%}"
+            else:
+                response_text = "Request passed all defense layers"
+
+            # Create metadata for structured access (for UI display)
+            metadata = {
+                "category": category,
+                "is_malicious": is_blocked,
+                "blocked_by": blocked_at if is_blocked else None,
+                "confidence": float(confidence),
+                "decision_source": decision_source,
+                # Include layer-specific details for debugging
+                "layer_details": {
+                    "l1_verdict": result.get("l1_verdict"),
+                    "l2_verdict": result.get("l2_verdict"),
+                    "l3_verdict": result.get("l3_verdict"),
+                }
+            }
             
             from engine.domain_models import create_defence_response
-            # Pop keys that clash with the factory function's own parameters
-            # before unpacking result into **metadata.
-            safe_meta = {k: v for k, v in result.items()
-                         if k not in ("text", "status_code", "headers")}
             defence_payload = create_defence_response(
                 text=response_text,
                 status_code=status_code,
-                headers={"x-decision-source": str(result.get("decision_source", "unknown"))},
-                **safe_meta
+                headers={"x-decision-source": str(decision_source)},
+                metadata=metadata  # Structured data for UI
             )
-            
-            # --- 4. RETURN CLEAN DELTAS ---
+
+            # Forward to LLM if enabled
+            defence_payload = await self.maybe_forward_to_llm(
+                defence_payload, input_prompt, runtime_config
+            )
+
             return {
                 "current_turn": {
                     "defence": defence_payload,
@@ -556,27 +586,26 @@ class MultilayerDefenseNode(BaseAdversarialNode):
             }
 
         except Exception as e:
-            print(f"❌ Error during defense system prediction for node {self.name}: {e}")
+            err(f"Defense system prediction failed: {e}")
             from engine.domain_models import create_defence_response
             error_defence = create_defence_response(f"Defense system failed: {e}", status_code=500)
             return {"current_turn": {"defence": error_defence, "node_name": self.name}}
 
     @classmethod
     def get_node_schema(cls) -> Dict[str, Any]:
-        """Return JSON schema for tunable node_params of MultilayerDefenseNode."""
         return {
             "type": "object",
             "properties": {
                 "ensemble_vote_threshold": {
                     "type": "integer",
-                    "description": "Number of L1 ensemble models that must vote malicious to trigger a block (out of 3).",
+                    "description": "L1 ensemble models that must vote malicious to trigger a block (out of 3).",
                     "default": 2,
                     "minimum": 1,
                     "maximum": 3
                 },
                 "bert_override_conf": {
                     "type": "number",
-                    "description": "L2 BERT confidence above which the BERT verdict overrides L1 ensemble alone.",
+                    "description": "L2 BERT confidence above which the BERT verdict overrides L1 ensemble.",
                     "default": 0.85,
                     "minimum": 0.0,
                     "maximum": 1.0
@@ -601,8 +630,8 @@ class MultilayerDefenseNode(BaseAdversarialNode):
                     "default": 0.75,
                     "minimum": 0.0,
                     "maximum": 1.0
-                }
+                },
+                **LLMForwardingMixin.llm_forwarding_schema_fragment(),
             },
             "required": []
         }
-

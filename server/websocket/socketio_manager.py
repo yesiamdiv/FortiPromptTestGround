@@ -33,7 +33,8 @@ class SocketIOManager:
             # Access-Control-Allow-Origin header which browsers reject.
             cors_allowed_origins=[],
             logger=False,
-            engineio_logger=False
+            engineio_logger=False,
+            max_http_buffer_size=10000000  # <--- ADD THIS LINE (10 MB limit)
         )
         
         # Track connections per run

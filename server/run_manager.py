@@ -147,9 +147,6 @@ class RunExecutor:
             # Let the engine execute - middlewares handle success state
             final_state = await self._run_with_controls(payload)
             checkpoint("Run completed successfully", run_id=self.run_id)
-            print("\n\n")
-            print(final_state)
-            print("\n\n")
             # FIX: Update internal memory so get_run_status is accurate before cleanup
             if self.graph_config.graph_type == "manual":
                 self.status = RunStatus.IDLE
