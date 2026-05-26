@@ -251,17 +251,16 @@ class DefenseSystem:
 
     # ── Layer 1: Ensemble ML ──────────────────────────────────────
     def layer1_ensemble(self, text):
-        if not self.vectorizer or not self.binary_models:
+        if not self.binary_models:
             return {"verdict": None, "votes": 0, "category": None}
 
-        vec = self.vectorizer.transform([text])
-        votes = sum(clf.predict(vec)[0] == 1 for clf in self.binary_models.values())
+        votes = sum(clf.predict([text])[0] == 1 for clf in self.binary_models.values())
         verdict = "MALICIOUS" if votes >= self.ENSEMBLE_VOTE_THRESHOLD else "BENIGN"
 
         category = None
         if self.category_lr and self.label_encoder_lr:
             try:
-                cat_pred = self.category_lr.predict(vec)[0]
+                cat_pred = self.category_lr.predict([text])[0]
                 category = self.label_encoder_lr.inverse_transform([cat_pred])[0]
             except:
                 pass
@@ -300,12 +299,11 @@ class DefenseSystem:
             return self._layer2_fallback_lr(text)
 
     def _layer2_fallback_lr(self, text):
-        if not self.vectorizer or not self.category_lr or not self.label_encoder_lr:
+        if not self.category_lr or not self.label_encoder_lr:
             return {"verdict": None, "confidence": 0.0, "category": None, "source": "NONE"}
 
-        vec = self.vectorizer.transform([text])
-        pred = self.category_lr.predict(vec)[0]
-        proba = self.category_lr.predict_proba(vec)[0]
+        pred = self.category_lr.predict([text])[0]
+        proba = self.category_lr.predict_proba([text])[0]
         conf = float(max(proba))
         category = self.label_encoder_lr.inverse_transform([pred])[0]
         verdict = "BENIGN" if category == "benign" else "MALICIOUS"
