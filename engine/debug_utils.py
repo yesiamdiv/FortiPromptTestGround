@@ -9,8 +9,19 @@ from typing import Any, Optional
 # CONFIG
 # ─────────────────────────────────────────────────────────────
 
+DEBUG_ENABLED = True
 
-DEBUG_ENABLED = False
+LOG_LEVELS = {
+    "trace": 10,
+    "debug": 20,
+    "info": 30,
+    "warning": 40,
+    "error": 50,
+    "critical": 60,
+}
+
+# Only show warning/error/critical
+MIN_LOG_LEVEL = LOG_LEVELS["warning"]
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -108,8 +119,12 @@ def debug(
     **kwargs: Any
 ) -> None:
 
-    # KILL SWITCH
+    # FULL KILL SWITCH
     if not DEBUG_ENABLED:
+        return
+
+    # LEVEL FILTER
+    if LOG_LEVELS.get(level.lower(), 0) < MIN_LOG_LEVEL:
         return
 
     _enable_windows_ansi()

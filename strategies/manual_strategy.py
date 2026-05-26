@@ -98,7 +98,7 @@ class ManualStrategy(AttackStrategy):
         user_prompt = payload["prompt"]
 
         conversation_history = context["history"] if "history" in context else []
-        full_attack_prompt = "\n".join(conversation_history + [f"User Input: {user_prompt}"])
+        full_attack_prompt = "\n".join(conversation_history + [f"{user_prompt}"])
         debug("Built attack prompt", history_len=len(conversation_history), prompt_length=len(full_attack_prompt))
 
         current_turn_state = state["current_turn"]

@@ -254,18 +254,18 @@ class DefenseSystem:
         if not self.binary_models:
             return {"verdict": None, "votes": 0, "category": None}
 
-        votes = sum(clf.predict([text])[0] == 1 for clf in self.binary_models.values())
+        votes = sum(int(clf.predict([text])[0] == 1) for clf in self.binary_models.values())
         verdict = "MALICIOUS" if votes >= self.ENSEMBLE_VOTE_THRESHOLD else "BENIGN"
 
         category = None
         if self.category_lr and self.label_encoder_lr:
             try:
-                cat_pred = self.category_lr.predict([text])[0]
-                category = self.label_encoder_lr.inverse_transform([cat_pred])[0]
+                cat_pred = int(self.category_lr.predict([text])[0])
+                category = str(self.label_encoder_lr.inverse_transform([cat_pred])[0])
             except:
                 pass
 
-        return {"verdict": verdict, "votes": votes, "category": category}
+        return {"verdict": verdict, "votes": int(votes), "category": category}
 
     # ── Layer 2: BERT-BiLSTM ──────────────────────────────────────
     def layer2_bert(self, text):
@@ -283,9 +283,9 @@ class DefenseSystem:
                 logits = self.bert_model(enc["input_ids"], enc["attention_mask"])
                 probs = torch.softmax(logits, dim=1)[0]
                 pred_idx = torch.argmax(probs).item()
-                conf = probs[pred_idx].item()
+                conf = float(probs[pred_idx].item())
 
-            pred_label = self.label_encoder_bert.inverse_transform([pred_idx])[0]
+            pred_label = str(self.label_encoder_bert.inverse_transform([pred_idx])[0])
             verdict = "BENIGN" if pred_label == "benign" else "MALICIOUS"
 
             return {
@@ -302,10 +302,10 @@ class DefenseSystem:
         if not self.category_lr or not self.label_encoder_lr:
             return {"verdict": None, "confidence": 0.0, "category": None, "source": "NONE"}
 
-        pred = self.category_lr.predict([text])[0]
+        pred = int(self.category_lr.predict([text])[0])
         proba = self.category_lr.predict_proba([text])[0]
         conf = float(max(proba))
-        category = self.label_encoder_lr.inverse_transform([pred])[0]
+        category = str(self.label_encoder_lr.inverse_transform([pred])[0])
         verdict = "BENIGN" if category == "benign" else "MALICIOUS"
 
         return {
@@ -331,7 +331,7 @@ class DefenseSystem:
                 outputs = self.harmful_model(**enc)
                 probs = torch.softmax(outputs.logits, dim=1)[0]
                 pred_idx = torch.argmax(probs).item()
-                conf = probs[pred_idx].item()
+                conf = float(probs[pred_idx].item())
 
             verdict = HARMFUL_LABEL_MAP.get(pred_idx, "UNKNOWN")
             return {"verdict": verdict, "confidence": conf}
@@ -380,13 +380,13 @@ class DefenseSystem:
             if l2["verdict"] == "BENIGN":
                 result["decision_source"] = "L2_BERT_HIGH_CONFIDENCE_OVERRIDE"
                 result["category"] = l2.get("category", "benign")
-                result["confidence"] = l2["confidence"]
+                result["confidence"] = float(l2["confidence"])
                 return result
             else:
                 result["blocked_at"] = "L2_BERT"
                 result["decision_source"] = "L2_BERT_HIGH_CONFIDENCE_BLOCK"
                 result["category"] = l2.get("category", "malicious")
-                result["confidence"] = l2["confidence"]
+                result["confidence"] = float(l2["confidence"])
                 return result
 
         # Medium confidence + L1 agreement
@@ -400,7 +400,7 @@ class DefenseSystem:
                     else l1.get("category", "malicious")
                 )
                 result["category"] = category
-                result["confidence"] = l2["confidence"]
+                result["confidence"] = float(l2["confidence"])
                 return result
 
         # Low confidence -> use L1
@@ -410,7 +410,7 @@ class DefenseSystem:
         else:
             result["decision_source"] = "L1_AND_L2_BENIGN"
             result["category"] = l2.get("category", "benign")
-            result["confidence"] = l2["confidence"]
+            result["confidence"] = float(l2["confidence"])
             return result
 
         # ── Layer 3 (Final Gate) ──────────────────────────────────
@@ -421,13 +421,13 @@ class DefenseSystem:
             result["blocked_at"] = "L3_HARMFUL_DETECTOR"
             result["decision_source"] = "L3_HARMFUL_CONTENT"
             result["category"] = l2.get("category", "harmful_content")
-            result["confidence"] = l3["confidence"]
+            result["confidence"] = float(l3["confidence"])
             return result
 
         # ── All layers passed → ALLOW ─────────────────────────────
         result["decision_source"] = "ALL_LAYERS_PASSED"
         result["category"] = l2.get("category", "benign")
-        result["confidence"] = max(l2.get("confidence", 0), l3.get("confidence", 0))
+        result["confidence"] = float(max(l2.get("confidence", 0), l3.get("confidence", 0)))
         return result
 
 

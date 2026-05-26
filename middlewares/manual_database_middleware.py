@@ -11,7 +11,7 @@ CHANGES FROM ORIGINAL:
 from typing import Dict, Any, Optional
 from middlewares.base import BaseMiddleware
 from server.database.connection import get_db
-from server.database.operations import get_db_ops
+from server.database.operations import DatabaseOperations, get_db_ops
 from engine.debug_utils import debug, tracer, step, warn, err
 from engine.state_schema import SystemState
 import uuid
@@ -92,7 +92,7 @@ class ManualDatabaseMiddleware(BaseMiddleware):
             if strategy_context.get("iteration_count", 0) == 0:
                 _now = datetime.utcnow().isoformat()
                 await db_ops.update_run(run_id, {"started_at": _now, "updated_at": _now})
-
+            
             await db_ops.create_manual_turn(
                 session_id=session_id,
                 turn_id=current_turn_id,
@@ -169,7 +169,8 @@ class ManualDatabaseMiddleware(BaseMiddleware):
             final_score = None
             if current_turn.get("evaluation"):
                 # ✓ REFACTORED: Direct property access
-                final_score = current_turn["evaluation"].score
+                # Convert numpy types to Python native types for JSON serialization
+                final_score = float(current_turn["evaluation"].score)
             
             context = state.get("strategy_context", {})
             best_score = context.get("best_score")
@@ -189,7 +190,7 @@ class ManualDatabaseMiddleware(BaseMiddleware):
                 "status": "idle",
                 "updated_at": datetime.utcnow().isoformat()
             })
-
+            
             await db_ops.update_manual_session_state(
                 session_id=session_id,
                 run_id=run_id,
@@ -198,7 +199,7 @@ class ManualDatabaseMiddleware(BaseMiddleware):
             )
             
             step("Manual run turn completed, state saved, set to IDLE", run_id=run_id)
-
+        
         except Exception as e:
             err("Error in after_run", error=str(e))
     
@@ -236,18 +237,19 @@ class ManualDatabaseMiddleware(BaseMiddleware):
         if not attack:
             return
         
+        # Convert numpy types to Python native types for JSON serialization
         await db_ops.update_manual_turn_data(
             session_id=session_id,
             turn_id=turn_id,
             attack_prompt=attack.to_string(),
             attack_metadata=attack.metadata,
-            turn_index=iteration
+            turn_index=int(iteration)
         )
         debug("Attack saved", turn=turn_id)
     
     async def _save_defence(
         self, 
-        db_ops, 
+        db_ops:DatabaseOperations, 
         run_id: str, 
         session_id: str, 
         iteration: int, 
@@ -262,14 +264,15 @@ class ManualDatabaseMiddleware(BaseMiddleware):
             return
         
         # ✓ REFACTORED: Direct property access
+        # Convert numpy types to Python native types for JSON serialization
         await db_ops.update_manual_turn_data(
             session_id=session_id,
             turn_id=turn_id,
             defence_response=defence.response_text,  # Direct property
-            defence_status_code=defence.status_code,
-            defence_was_blocked=defence.was_blocked(),
+            defence_status_code=int(defence.status_code),
+            defence_was_blocked=bool(defence.was_blocked()),
             defence_metadata=defence.metadata,
-            turn_index=iteration
+            turn_index=int(iteration)
         )
         debug("Defence saved", turn=turn_id)
     
@@ -290,14 +293,15 @@ class ManualDatabaseMiddleware(BaseMiddleware):
             return
         
         # ✓ REFACTORED: All direct property access
+        # Convert numpy types to Python native types for JSON serialization
         await db_ops.update_manual_turn_data(
             session_id=session_id,
             turn_id=turn_id,
-            evaluation_score=evaluation.score,        # Direct property
-            evaluation_success=evaluation.success,    # Direct property
+            evaluation_score=float(evaluation.score),        # Direct property
+            evaluation_success=bool(evaluation.success),    # Direct property
             evaluation_category=evaluation.category,  # Direct property
             evaluation_feedback=evaluation.reasoning, # Direct property
             evaluation_metadata=evaluation.metadata,
-            turn_index=iteration
+            turn_index=int(iteration)
         )
         debug("Evaluation saved", turn=turn_id)
