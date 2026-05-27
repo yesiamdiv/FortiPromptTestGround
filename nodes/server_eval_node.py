@@ -308,7 +308,7 @@ class ServerEvalNode(BaseAdversarialNode):
                 },
                 "timeout": {
                     "type": "number",
-                    "default": 30.0,
+                    "default": 300.0,
                     "description": "HTTP request timeout in seconds",
                 },
                 "strictness": {

@@ -205,6 +205,38 @@ class WorkflowEngine:
     # MIDDLEWARE TRIGGER METHODS - Refactored Signatures
     # =========================================================================
 
+    async def _run_middleware_tasks(
+        self,
+        tasks: list,
+        hook_name: str,
+        run_id: str,
+    ) -> None:
+        """
+        Run middleware coroutines concurrently and log any failures.
+
+        Uses return_exceptions=True so one failing middleware never blocks the
+        others, but exceptions are surfaced via the error logger rather than
+        silently discarded.  The engine deliberately does NOT know what each
+        middleware does — it only ensures failures are visible.
+        """
+        if not tasks:
+            return
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                middleware_name = (
+                    self.middlewares[i].name
+                    if i < len(self.middlewares)
+                    else f"middleware[{i}]"
+                )
+                err(
+                    f"Middleware raised in {hook_name}",
+                    middleware=middleware_name,
+                    run_id=run_id,
+                    error=str(result),
+                    error_type=type(result).__name__,
+                )
+
     async def _trigger_before_run(
         self, 
         initial_state: SystemState, 
@@ -213,15 +245,12 @@ class WorkflowEngine:
     ) -> None:
         """Trigger all before_run middleware hooks"""
         debug("Triggering before_run middlewares", count=len(self.middlewares))
-        
         tasks = [
-            m.before_run(initial_state, runtime_config, run_id) 
+            m.before_run(initial_state, runtime_config, run_id)
             for m in self.middlewares
         ]
-        
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-    
+        await self._run_middleware_tasks(tasks, "before_run", run_id)
+
     async def _trigger_after_step(
         self, 
         state: SystemState, 
@@ -239,15 +268,12 @@ class WorkflowEngine:
             run_id=run_id, 
             node=node_name
         )
-        
         tasks = [
-            m.after_step(state, run_id, node_name) 
+            m.after_step(state, run_id, node_name)
             for m in self.middlewares
         ]
-        
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-    
+        await self._run_middleware_tasks(tasks, "after_step", run_id)
+
     async def _trigger_after_run(
         self, 
         final_state: SystemState, 
@@ -255,15 +281,12 @@ class WorkflowEngine:
     ) -> None:
         """Trigger all after_run middleware hooks"""
         step("Triggering after_run middlewares", run_id=run_id)
-        
         tasks = [
-            m.after_run(final_state, run_id) 
+            m.after_run(final_state, run_id)
             for m in self.middlewares
         ]
-        
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-    
+        await self._run_middleware_tasks(tasks, "after_run", run_id)
+
     async def _trigger_error(
         self, 
         error: Exception, 
@@ -272,15 +295,12 @@ class WorkflowEngine:
     ) -> None:
         """Trigger all on_error middleware hooks"""
         err("Workflow error", error=str(error), run_id=run_id)
-        
         tasks = [
-            m.on_error(error, run_id, state) 
-            for m in self.middlewares 
+            m.on_error(error, run_id, state)
+            for m in self.middlewares
             if hasattr(m, 'on_error')
         ]
-        
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        await self._run_middleware_tasks(tasks, "on_error", run_id)
 
 
 def create_default_engine():

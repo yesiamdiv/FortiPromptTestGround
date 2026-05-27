@@ -8,18 +8,28 @@ ARCHITECTURAL ROLE:
 BatchDatabaseMiddleware is a thin orchestration wrapper around the exact same
 save functions used by AutomaticDatabaseMiddleware.
 
-After the eval node fires (node_name == "eval"), the middleware reads
-strategy_context["current_chunk_results"] — the list of
-{turn_id, prompt, attack, defence, evaluation} records filled in by
-BatchWrapperNode — and calls the SAME _save_attack / _save_defence /
-_save_evaluation helpers one record at a time, sequentially.
+It mirrors the automatic middleware's per-node trigger pattern exactly, but
+reads from strategy_context["current_chunk_results"] instead of current_turn,
+because BatchWrapperNode accumulates a whole chunk before returning.
+
+TRIGGER MAPPING (mirrors AutomaticDatabaseMiddleware node-by-node):
+  "defence" node — chunk_results has {attack, defence} per item at this point.
+                   Save attacks + defences immediately, just like automatic does
+                   on "attack" and "defence" nodes respectively.
+
+  "eval" node    — chunk_results gains {evaluation} per item.
+                   Save evaluations immediately, then update run counters.
+
+This ensures data appears in the DB as soon as each batch phase completes,
+not all at once at the end of the cycle.
 
 NO new DB logic. NO bulk ops. NO insert_many.
 The loop just calls the same helpers the automatic middleware already uses.
 
 LIFECYCLE HOOKS:
   before_run  — record started_at (identical to AutomaticDatabaseMiddleware)
-  after_step  — on "eval": persist entire chunk sequentially
+  after_step  — on "defence": persist attacks + defences from chunk_results
+                on "eval":    persist evaluations from chunk_results
   after_run   — mark run COMPLETED with aggregate stats
   on_error    — mark run FAILED
 ================================================================================
@@ -83,11 +93,19 @@ class BatchDatabaseMiddleware(BaseMiddleware):
         node_name: Optional[str] = None,
     ) -> None:
         """
-        After the eval node: persist every record in current_chunk_results sequentially.
-        Uses the same _save_* helpers as AutomaticDatabaseMiddleware — no new DB logic.
+        Persist batch data immediately as each phase completes — mirrors the
+        per-node pattern of AutomaticDatabaseMiddleware.
+
+        "defence" — chunk_results now has {attack, defence} per item.
+                    Save attacks + defences right away so they appear in the DB
+                    as soon as the batch defence phase finishes, not at eval time.
+
+        "eval"    — chunk_results now has {evaluation} filled in per item.
+                    Save evaluations and update run-level counters.
+
+        All other nodes are ignored (no data to persist yet).
         """
-        # Only act once per chunk cycle — after eval, when all three payloads are set
-        if node_name != "eval":
+        if node_name not in ("defence", "eval"):
             return
 
         db = get_db()
@@ -100,43 +118,53 @@ class BatchDatabaseMiddleware(BaseMiddleware):
             chunk_results: List[Dict[str, Any]] = context.get("current_chunk_results", [])
 
             if not chunk_results:
-                warn("BatchDatabaseMiddleware: no chunk_results to persist")
+                warn("BatchDatabaseMiddleware: no chunk_results to persist", node=node_name)
                 return
 
-            step("BatchDatabaseMiddleware: persisting chunk", items=len(chunk_results))
-            successful_in_chunk = 0
+            # ── "defence" node: save attacks + defences ──────────────────────
+            if node_name == "defence":
+                step("BatchDatabaseMiddleware: persisting attacks+defences", items=len(chunk_results))
+                for record in chunk_results:
+                    turn_id: str = record.get("turn_id", f"batch_{run_id}_{record.get('global_index', 0)}")
+                    global_index: int = record.get("global_index", 0)
 
-            # ── Sequential persistence — NO bulk ops, NO concurrency ──
-            for record in chunk_results:
-                turn_id: str = record.get("turn_id", f"batch_{run_id}_{record.get('global_index', 0)}")
-                global_index: int = record.get("global_index", 0)
+                    if self.middleware_config.get("save_attacks"):
+                        await self._save_attack(db_ops, run_id, global_index, record, turn_id)
 
-                if self.middleware_config.get("save_attacks"):
-                    await self._save_attack(db_ops, run_id, global_index, record, turn_id)
+                    if self.middleware_config.get("save_defences"):
+                        await self._save_defence(db_ops, run_id, global_index, record, turn_id)
 
-                if self.middleware_config.get("save_defences"):
-                    await self._save_defence(db_ops, run_id, global_index, record, turn_id)
+                step("BatchDatabaseMiddleware: attacks+defences persisted", items=len(chunk_results))
 
-                if self.middleware_config.get("save_evaluations"):
-                    await self._save_evaluation(db_ops, run_id, global_index, record, turn_id)
-                    eval_obj = record.get("evaluation")
-                    if eval_obj and hasattr(eval_obj, "success") and eval_obj.success:
-                        successful_in_chunk += 1
+            # ── "eval" node: save evaluations + update counters ──────────────
+            elif node_name == "eval":
+                step("BatchDatabaseMiddleware: persisting evaluations", items=len(chunk_results))
+                successful_in_chunk = 0
 
-            # Increment run-level counters (same $inc pattern as AutomaticDatabaseMiddleware)
-            inc_update = {
-                "$inc": {
-                    "total_iterations": len(chunk_results),
-                    "successful_iterations": successful_in_chunk,
+                for record in chunk_results:
+                    turn_id = record.get("turn_id", f"batch_{run_id}_{record.get('global_index', 0)}")
+                    global_index = record.get("global_index", 0)
+
+                    if self.middleware_config.get("save_evaluations"):
+                        await self._save_evaluation(db_ops, run_id, global_index, record, turn_id)
+                        eval_obj = record.get("evaluation")
+                        if eval_obj and hasattr(eval_obj, "success") and eval_obj.success:
+                            successful_in_chunk += 1
+
+                # Increment run-level counters (same $inc pattern as AutomaticDatabaseMiddleware)
+                inc_update = {
+                    "$inc": {
+                        "total_iterations": len(chunk_results),
+                        "successful_iterations": successful_in_chunk,
+                    }
                 }
-            }
-            await db_ops.runs.update_one({"run_id": run_id}, inc_update)
+                await db_ops.runs.update_one({"run_id": run_id}, inc_update)
 
-            step(
-                "BatchDatabaseMiddleware: chunk persisted",
-                items=len(chunk_results),
-                successful=successful_in_chunk,
-            )
+                step(
+                    "BatchDatabaseMiddleware: evaluations persisted",
+                    items=len(chunk_results),
+                    successful=successful_in_chunk,
+                )
 
         except Exception as e:
             err("BatchDatabaseMiddleware.after_step error", error=str(e), node=node_name)
