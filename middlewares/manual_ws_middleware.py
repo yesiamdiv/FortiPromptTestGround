@@ -12,8 +12,9 @@ from typing import Dict, Any, Optional
 from middlewares.base import BaseMiddleware
 from server.websocket.socketio_manager import SocketIOManager
 from server.websocket.operations import get_ws_ops
-from engine.debug_utils import debug, tracer, step, warn, err
-from engine.state_schema import SystemState
+from core.logging import debug, tracer, step, warn, err
+from core.constants import NodeName
+from engine.state import SystemState
 
 
 class ManualWSMiddleware(BaseMiddleware):
@@ -96,7 +97,7 @@ class ManualWSMiddleware(BaseMiddleware):
                 warn("Missing session_id, skipping manual broadcast", node=node_name)
                 return
             
-            if node_name == "attack" and self.middleware_config.get("broadcast_attacks"):
+            if node_name == NodeName.ATTACK and self.middleware_config.get("broadcast_attacks"):
                 attack = current_turn.get("attack")
                 if attack:
                     attack_data = {
@@ -110,7 +111,7 @@ class ManualWSMiddleware(BaseMiddleware):
                         run_id, session_id, turn_id, iteration, attack_data
                     )
             
-            elif node_name == "defence" and self.middleware_config.get("broadcast_defences"):
+            elif node_name == NodeName.DEFENCE and self.middleware_config.get("broadcast_defences"):
                 defence = current_turn.get("defence")
                 if defence:
                     defence_data = {
@@ -125,7 +126,7 @@ class ManualWSMiddleware(BaseMiddleware):
                         run_id, session_id, turn_id, iteration, defence_data
                     )
             
-            elif node_name == "eval" and self.middleware_config.get("broadcast_evaluations"):
+            elif node_name == NodeName.EVAL and self.middleware_config.get("broadcast_evaluations"):
                 evaluation = current_turn.get("evaluation")
                 if evaluation:
                     eval_data = {
@@ -141,7 +142,7 @@ class ManualWSMiddleware(BaseMiddleware):
                         run_id, session_id, turn_id, iteration, eval_data
                     )
             
-            elif node_name == "router":
+            elif node_name == NodeName.ROUTER:
                 await self.ws_ops.broadcast_run_progress(
                     run_id,
                     current=iteration,

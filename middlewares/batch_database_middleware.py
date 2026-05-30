@@ -41,8 +41,9 @@ from datetime import datetime
 from middlewares.base import BaseMiddleware
 from server.database.connection import get_db
 from server.database.operations import get_db_ops
-from engine.debug_utils import debug, tracer, step, warn, err
-from engine.state_schema import SystemState
+from core.logging import debug, tracer, step, warn, err
+from core.constants import NodeName
+from engine.state import SystemState
 
 
 class BatchDatabaseMiddleware(BaseMiddleware):
@@ -105,7 +106,7 @@ class BatchDatabaseMiddleware(BaseMiddleware):
 
         All other nodes are ignored (no data to persist yet).
         """
-        if node_name not in ("defence", "eval"):
+        if node_name not in (NodeName.DEFENCE, NodeName.EVAL):
             return
 
         db = get_db()
@@ -122,7 +123,7 @@ class BatchDatabaseMiddleware(BaseMiddleware):
                 return
 
             # ── "defence" node: save attacks + defences ──────────────────────
-            if node_name == "defence":
+            if node_name == NodeName.DEFENCE:
                 step("BatchDatabaseMiddleware: persisting attacks+defences", items=len(chunk_results))
                 for record in chunk_results:
                     turn_id: str = record.get("turn_id", f"batch_{run_id}_{record.get('global_index', 0)}")
@@ -137,7 +138,7 @@ class BatchDatabaseMiddleware(BaseMiddleware):
                 step("BatchDatabaseMiddleware: attacks+defences persisted", items=len(chunk_results))
 
             # ── "eval" node: save evaluations + update counters ──────────────
-            elif node_name == "eval":
+            elif node_name == NodeName.EVAL:
                 step("BatchDatabaseMiddleware: persisting evaluations", items=len(chunk_results))
                 successful_in_chunk = 0
 

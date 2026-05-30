@@ -14,8 +14,9 @@ from typing import Dict, Any, Optional
 from middlewares.base import BaseMiddleware
 from server.websocket.socketio_manager import SocketIOManager
 from server.websocket.operations import get_ws_ops
-from engine.debug_utils import debug, tracer, step, warn, err
-from engine.state_schema import SystemState
+from core.logging import debug, tracer, step, warn, err
+from core.constants import NodeName
+from engine.state import SystemState
 
 
 class AutomaticWSMiddleware(BaseMiddleware):
@@ -90,16 +91,16 @@ class AutomaticWSMiddleware(BaseMiddleware):
             turn_id = state.get("current_turn", {}).get("turn_id") or context.get("turn_id", f"turn_{iteration}")
 
             # Route based on node name
-            if node_name == "attack" and self.middleware_config.get("broadcast_attacks"):
+            if node_name == NodeName.ATTACK and self.middleware_config.get("broadcast_attacks"):
                 await self._broadcast_attack(run_id, iteration, state, turn_id)
             
-            elif node_name == "defence" and self.middleware_config.get("broadcast_defences"):
+            elif node_name == NodeName.DEFENCE and self.middleware_config.get("broadcast_defences"):
                 await self._broadcast_defence(run_id, iteration, state, turn_id)
             
-            elif node_name == "eval" and self.middleware_config.get("broadcast_evaluations"):
+            elif node_name == NodeName.EVAL and self.middleware_config.get("broadcast_evaluations"):
                 await self._broadcast_evaluation(run_id, iteration, state, turn_id)
             
-            elif node_name == "router":
+            elif node_name == NodeName.ROUTER:
                 await self._broadcast_routing(run_id, state)
             
         except Exception as e:

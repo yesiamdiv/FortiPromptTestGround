@@ -15,9 +15,9 @@ import httpx
 from datetime import datetime
 from nodes.base import BaseAdversarialNode
 from nodes.llm_forwarding_mixin import LLMForwardingMixin
-from engine.domain_models import create_defence_response, AttackPayload
-from engine.state_schema import SystemState
-from engine.debug_utils import debug, tracer, step, warn, err
+from core.models import create_defence_response, AttackPayload
+from engine.state import SystemState
+from core.logging import debug, tracer, step, warn, err
 
 
 class HTTPDefenceNode(LLMForwardingMixin, BaseAdversarialNode):

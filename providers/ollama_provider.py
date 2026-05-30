@@ -6,7 +6,8 @@ Integrates with local Ollama instance for LLM inference.
 
 from typing import Dict, Any
 from providers.base import BaseLLMProvider
-from engine.debug_utils import debug, tracer, step, warn, err
+from core.logging import debug, tracer, step, warn, err
+from core.env import get_settings
 
 
 class OllamaProvider(BaseLLMProvider):
@@ -19,7 +20,7 @@ class OllamaProvider(BaseLLMProvider):
     def __init__(self, config: Dict[str, Any]):
         tracer("OllamaProvider.__init__", model=config.get("model"))
         default_config = {
-            "base_url": "http://localhost:11434",
+            "base_url": get_settings().ollama_base_url,
             "temperature": 0.7,
             "max_tokens": 1000
         }

@@ -6,10 +6,25 @@ from pathlib import Path
 from typing import Any, Optional
 
 # ─────────────────────────────────────────────────────────────
-# CONFIG
+# CONFIG  (driven by core.env / environment variables)
 # ─────────────────────────────────────────────────────────────
 
-DEBUG_ENABLED = True
+# Lazy import avoids circular dependencies; settings are read once on first use.
+def _load_debug_config() -> tuple[bool, int]:
+    try:
+        from core.env import get_settings
+        s = get_settings()
+        enabled = s.debug_enabled
+        level_name = s.log_level.lower()
+    except Exception:
+        # Fallback if settings are unavailable during early startup
+        enabled = False
+        level_name = "warning"
+    levels = {"trace": 10, "debug": 20, "info": 30, "warning": 40, "error": 50, "critical": 60}
+    return enabled, levels.get(level_name, 40)
+
+
+DEBUG_ENABLED, MIN_LOG_LEVEL = _load_debug_config()
 
 LOG_LEVELS = {
     "trace": 10,
@@ -19,9 +34,6 @@ LOG_LEVELS = {
     "error": 50,
     "critical": 60,
 }
-
-# Only show warning/error/critical
-MIN_LOG_LEVEL = LOG_LEVELS["warning"]
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -50,9 +62,9 @@ LEVEL_LABELS = {
     "TRACE": "TRACE",
 }
 
-# Try to auto-detect project root (fallback = cwd)
+# core/logging.py lives two levels below the repo root (core/logging.py → core/ → root)
 try:
-    PROJECT_ROOT = Path(__file__).resolve().parents[2]
+    PROJECT_ROOT = Path(__file__).resolve().parents[1]
 except Exception:
     PROJECT_ROOT = Path.cwd()
 
@@ -96,14 +108,14 @@ def _format_path(path: str) -> str:
     try:
         p = Path(path).resolve()
         rel = p.relative_to(PROJECT_ROOT)
-        return rel.as_posix()  # normalize slashes
+        return rel.as_posix()
     except Exception:
-        return Path(path).name  # fallback
+        return Path(path).name
 
 
 def _resolve_color(color: Optional[str], level: str) -> str:
     if color:
-        return COLORS.get(color, color)  # allow key OR raw ANSI
+        return COLORS.get(color, color)
     return COLORS.get(level, COLORS["debug"])
 
 
@@ -119,11 +131,9 @@ def debug(
     **kwargs: Any
 ) -> None:
 
-    # FULL KILL SWITCH
     if not DEBUG_ENABLED:
         return
 
-    # LEVEL FILTER
     if LOG_LEVELS.get(level.lower(), 0) < MIN_LOG_LEVEL:
         return
 

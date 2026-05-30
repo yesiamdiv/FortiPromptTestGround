@@ -54,7 +54,6 @@ class DefencePayload:
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.utcnow)
     
-    # Kept this because it contains actual logic/computation
     def was_blocked(self) -> bool:
         if self.status_code >= 400:
             return True

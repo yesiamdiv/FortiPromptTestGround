@@ -12,8 +12,9 @@ from typing import Dict, Any, Optional
 from middlewares.base import BaseMiddleware
 from server.database.connection import get_db
 from server.database.operations import DatabaseOperations, get_db_ops
-from engine.debug_utils import debug, tracer, step, warn, err
-from engine.state_schema import SystemState
+from core.logging import debug, tracer, step, warn, err
+from core.constants import NodeName
+from engine.state import SystemState
 import uuid
 from datetime import datetime
 
@@ -133,13 +134,13 @@ class ManualDatabaseMiddleware(BaseMiddleware):
                 warn("Missing session_id or turn_id in after_step", node=node_name)
                 return
             
-            if node_name == "attack" and self.middleware_config.get("save_attacks"):
+            if node_name == NodeName.ATTACK and self.middleware_config.get("save_attacks"):
                 await self._save_attack(db_ops, run_id, session_id, iteration, state, current_turn_id)
             
-            elif node_name == "defence" and self.middleware_config.get("save_defences"):
+            elif node_name == NodeName.DEFENCE and self.middleware_config.get("save_defences"):
                 await self._save_defence(db_ops, run_id, session_id, iteration, state, current_turn_id)
             
-            elif node_name == "eval" and self.middleware_config.get("save_evaluations"):
+            elif node_name == NodeName.EVAL and self.middleware_config.get("save_evaluations"):
                 await self._save_evaluation(db_ops, run_id, session_id, iteration, state, current_turn_id)
             
         except Exception as e:

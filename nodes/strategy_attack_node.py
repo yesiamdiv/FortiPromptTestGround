@@ -17,8 +17,8 @@ DEVELOPER INSTRUCTIONS:
 
 from typing import Dict, Any
 from nodes.base import BaseAdversarialNode
-from engine.state_schema import SystemState
-from engine.debug_utils import debug, tracer, step, warn, err
+from engine.state import SystemState
+from core.logging import debug, tracer, step, warn, err
 
 
 class StrategyDrivenAttackNode(BaseAdversarialNode):

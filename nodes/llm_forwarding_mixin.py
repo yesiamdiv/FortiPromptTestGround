@@ -39,8 +39,8 @@ SCHEMA FRAGMENT (add to each defence node's get_node_schema):
 """
 
 from typing import Dict, Any, Optional
-from engine.debug_utils import debug, step, warn, err, tracer
-from engine.domain_models import DefencePayload
+from core.logging import debug, step, warn, err, tracer
+from core.models import DefencePayload
 
 
 class LLMForwardingMixin:
@@ -134,7 +134,7 @@ class LLMForwardingMixin:
 
             # Replace response_text in-place on a new DefencePayload
             # (domain models are likely frozen/dataclass — rebuild via factory)
-            from engine.domain_models import create_defence_response
+            from core.models import create_defence_response
             updated_defence = create_defence_response(
                 text=llm_response_text,
                 status_code=defence.status_code,   # keep original block decision

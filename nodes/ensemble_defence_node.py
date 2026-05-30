@@ -13,9 +13,9 @@ from typing import Dict, Any, Callable, List, Optional
 from datetime import datetime
 from nodes.base import BaseAdversarialNode
 from nodes.llm_forwarding_mixin import LLMForwardingMixin
-from engine.domain_models import create_defence_response
-from engine.state_schema import SystemState
-from engine.debug_utils import debug, tracer, step, warn, err
+from core.models import create_defence_response
+from engine.state import SystemState
+from core.logging import debug, tracer, step, warn, err
 
 
 class EnsembleDefenceNode(LLMForwardingMixin, BaseAdversarialNode):

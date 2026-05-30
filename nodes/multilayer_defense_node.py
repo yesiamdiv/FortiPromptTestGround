@@ -27,8 +27,8 @@ from sklearn.pipeline import Pipeline
 
 from nodes.base import BaseAdversarialNode
 from nodes.llm_forwarding_mixin import LLMForwardingMixin
-from engine.state_schema import SystemState
-from engine.debug_utils import tracer, step, err
+from engine.state import SystemState
+from core.logging import tracer, step, err
 
 # ─── CONFIG (Relative Paths) ────────────────────────────────────────
 MODEL_DIR = Path(os.path.join(os.path.dirname(__file__), "data"))
@@ -506,7 +506,7 @@ class MultilayerDefenseNode(LLMForwardingMixin, BaseAdversarialNode):
             await self.initialize_defense_system()
 
         if self.defense_system is None:
-            from engine.domain_models import create_defence_response
+            from core.models import create_defence_response
             error_defence = create_defence_response("Defense system not initialized", status_code=500)
             return {"current_turn": {"defence": error_defence, "node_name": self.name}}
             
@@ -563,7 +563,7 @@ class MultilayerDefenseNode(LLMForwardingMixin, BaseAdversarialNode):
                 }
             }
             
-            from engine.domain_models import create_defence_response
+            from core.models import create_defence_response
             defence_payload = create_defence_response(
                 text=response_text,
                 status_code=status_code,
@@ -585,7 +585,7 @@ class MultilayerDefenseNode(LLMForwardingMixin, BaseAdversarialNode):
 
         except Exception as e:
             err(f"Defense system prediction failed: {e}")
-            from engine.domain_models import create_defence_response
+            from core.models import create_defence_response
             error_defence = create_defence_response(f"Defense system failed: {e}", status_code=500)
             return {"current_turn": {"defence": error_defence, "node_name": self.name}}
 

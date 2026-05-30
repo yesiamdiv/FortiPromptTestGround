@@ -54,9 +54,9 @@ Both must be present. The defence response_text is what gets evaluated.
 from typing import Dict, Any, Optional, List
 import httpx
 from nodes.base import BaseAdversarialNode
-from engine.domain_models import create_eval_result
-from engine.state_schema import SystemState
-from engine.debug_utils import debug, tracer, step, warn, err
+from core.models import create_eval_result
+from engine.state import SystemState
+from core.logging import debug, tracer, step, warn, err
 
 
 class ServerEvalNode(BaseAdversarialNode):

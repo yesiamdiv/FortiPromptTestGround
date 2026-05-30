@@ -6,7 +6,7 @@ All LLM providers must implement this interface to work with the engine.
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
-from engine.debug_utils import debug, tracer, step, warn, err
+from core.logging import debug, tracer, step, warn, err
 
 
 class BaseLLMProvider(ABC):

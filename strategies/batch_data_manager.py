@@ -36,7 +36,7 @@ import os
 from pathlib import Path
 from typing import List, Optional
 
-from engine.debug_utils import step, warn, err
+from core.logging import step, warn, err
 
 # Canonical storage directory — relative to project root
 BATCH_DATA_DIR = Path(__file__).parent / "data" / "batch"

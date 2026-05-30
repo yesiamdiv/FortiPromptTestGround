@@ -35,8 +35,9 @@ from datetime import datetime
 from middlewares.base import BaseMiddleware
 from server.websocket.socketio_manager import SocketIOManager
 from server.websocket.operations import get_ws_ops
-from engine.debug_utils import debug, tracer, step, warn, err
-from engine.state_schema import SystemState
+from core.logging import debug, tracer, step, warn, err
+from core.constants import NodeName
+from engine.state import SystemState
 
 
 class BatchWSMiddleware(BaseMiddleware):
@@ -115,11 +116,11 @@ class BatchWSMiddleware(BaseMiddleware):
 
         All other nodes are ignored.
         """
-        if node_name == "router":
+        if node_name == NodeName.ROUTER:
             await self._broadcast_routing(run_id, state)
             return
 
-        if node_name not in ("defence", "eval"):
+        if node_name not in (NodeName.DEFENCE, NodeName.EVAL):
             return
 
         try:
@@ -136,7 +137,7 @@ class BatchWSMiddleware(BaseMiddleware):
             chunk_start_total = total_processed - len(chunk_results)
 
             # ── "defence" node: broadcast attacks + defences ─────────────────
-            if node_name == "defence":
+            if node_name == NodeName.DEFENCE:
                 step("BatchWSMiddleware: broadcasting attacks+defences", items=len(chunk_results))
 
                 for local_idx, record in enumerate(chunk_results):
@@ -188,7 +189,7 @@ class BatchWSMiddleware(BaseMiddleware):
                 step("BatchWSMiddleware: attacks+defences broadcast done", items=len(chunk_results))
 
             # ── "eval" node: broadcast evaluations + stats ───────────────────
-            elif node_name == "eval":
+            elif node_name == NodeName.EVAL:
                 step("BatchWSMiddleware: broadcasting evaluations", items=len(chunk_results))
 
                 # Running success counter — start from where we left off before this chunk.

@@ -7,7 +7,7 @@ Replaces FastAPI WebSockets with Socket.IO for better compatibility.
 
 import socketio
 from typing import Dict, Set, Any, Optional
-from engine.debug_utils import debug, err, tracer, step, checkpoint
+from core.logging import debug, err, tracer, step, checkpoint
 
 
 class SocketIOManager:

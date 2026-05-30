@@ -6,7 +6,7 @@ Integrates with Google's Gemini API for LLM inference.
 
 from typing import Dict, Any
 from providers.base import BaseLLMProvider
-from engine.debug_utils import debug, tracer, step, warn, err
+from core.logging import debug, tracer, step, warn, err
 
 
 class GeminiProvider(BaseLLMProvider):

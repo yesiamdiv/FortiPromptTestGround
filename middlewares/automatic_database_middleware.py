@@ -13,8 +13,9 @@ from typing import Dict, Any, Optional
 from middlewares.base import BaseMiddleware
 from server.database.connection import get_db
 from server.database.operations import get_db_ops
-from engine.debug_utils import debug, tracer, step, warn, err
-from engine.state_schema import SystemState
+from core.logging import debug, tracer, step, warn, err
+from core.constants import NodeName
+from engine.state import SystemState
 
 
 class AutomaticDatabaseMiddleware(BaseMiddleware):
@@ -92,13 +93,13 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
             turn_id = state.get("current_turn", {}).get("turn_id") or context.get("turn_id", f"turn_{iteration}")
             
             # Route based on node name
-            if node_name == "attack" and self.middleware_config.get("save_attacks"):
+            if node_name == NodeName.ATTACK and self.middleware_config.get("save_attacks"):
                 await self._save_attack(db_ops, run_id, iteration, state, turn_id)
             
-            elif node_name == "defence" and self.middleware_config.get("save_defences"):
+            elif node_name == NodeName.DEFENCE and self.middleware_config.get("save_defences"):
                 await self._save_defence(db_ops, run_id, iteration, state, turn_id)
             
-            elif node_name == "eval" and self.middleware_config.get("save_evaluations"):
+            elif node_name == NodeName.EVAL and self.middleware_config.get("save_evaluations"):
                 await self._save_evaluation(db_ops, run_id, iteration, state, turn_id)
                 # 5-B5: Increment iteration counters
                 current_turn = state.get("current_turn", {})

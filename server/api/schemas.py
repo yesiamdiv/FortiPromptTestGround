@@ -4,8 +4,8 @@ API Request and Response Schemas
 
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional, Literal
-from server.config.models import GraphConfig
-from server.database.models_v2 import RunModel, ManualSession, ManualTurn, AttackData, DefenceData, EvaluationData
+from core.config import GraphConfig
+from server.database.models import RunModel, ManualSession, ManualTurn, AttackData, DefenceData, EvaluationData
 
 
 # --- Run Management Schemas ---

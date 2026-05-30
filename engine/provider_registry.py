@@ -9,7 +9,7 @@ from providers.base import BaseLLMProvider
 from providers.ollama_provider import OllamaProvider
 from providers.gemini_provider import GeminiProvider
 # from providers.openai_provider import OpenAIProvider
-from engine.debug_utils import tracer, step, debug, warn, err
+from core.logging import tracer, step, debug, warn, err
 
 
 ProviderFactory = Callable[..., Any]

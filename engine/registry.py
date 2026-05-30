@@ -23,7 +23,7 @@ from strategies.batch_strategy import BatchStrategy
 
 # Import provider registry and registration function
 from engine.provider_registry import get_provider_registry, register_all_providers
-from engine.debug_utils import debug, tracer, step, checkpoint, warn, err
+from core.logging import debug, tracer, step, checkpoint, warn, err
 
 
 # --- Node Registry ---

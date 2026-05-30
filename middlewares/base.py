@@ -37,8 +37,8 @@ MIDDLEWARE RESPONSIBILITIES:
 
 from abc import ABC
 from typing import Dict, Any, Optional
-from engine.state_schema import SystemState
-from engine.debug_utils import debug, tracer
+from engine.state import SystemState
+from core.logging import debug, tracer
 
 
 class BaseMiddleware(ABC):

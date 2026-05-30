@@ -7,9 +7,10 @@ from contextlib import asynccontextmanager
 import os
 
 # Import API routers
-from server.api.routes import router as api_router # Main API routes
-from server.api.manual_routes import router as manual_router # Import manual routes
-from server.api.discovery_routes import router as discovery_router # Discovery routes for nodes/strategies
+from server.api.runs import router as runs_router
+from server.api.discovery import router as discovery_router
+from server.api.data import router as data_router
+from server.api.manual_routes import router as manual_router
 
 # Database and WebSocket imports
 from server.database.connection import init_db, close_db, get_db
@@ -18,6 +19,7 @@ from server.run_manager import get_run_manager
 
 # Unified registry for all components
 from engine.registry import register_all_components # Use unified registration
+from core.env import get_settings
 
 
 # ============================================================================
@@ -51,8 +53,9 @@ async def lifespan(app: FastAPI):
     # 2. Database
     db = None
     try:
-        mongo_url = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
-        db_name   = os.getenv("MONGODB_DB_NAME", "adversarial_testing")
+        _settings = get_settings()
+        mongo_url = _settings.mongodb_uri
+        db_name   = _settings.mongodb_db_name
         db = await init_db(mongo_url, db_name)
         print(f"[OK] Database connected ({db_name} @ {mongo_url})")
     except Exception as e:
@@ -143,8 +146,7 @@ app = FastAPI(
 # CORS
 # Read allowed origins from env var, falling back to localhost for development
 import os as _os
-_raw_origins = _os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001")
-_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+_allowed_origins = get_settings().cors_origins
 
 app.add_middleware(
     CORSMiddleware,
@@ -160,9 +162,10 @@ app.add_middleware(
 # ============================================================================
 
 # Include API routers
-app.include_router(api_router, prefix="/api/v1")       # Main API routes for runs, strategies, etc.
-app.include_router(manual_router, prefix="/api/v1")    # Manual session and turn management routes
-app.include_router(discovery_router, prefix="/api/v1") # Discovery routes for available nodes/strategies
+app.include_router(runs_router, prefix="/api/v1")       # Run lifecycle: create, start, stop, delete, list
+app.include_router(discovery_router, prefix="/api/v1")  # Strategy, provider, and node discovery
+app.include_router(data_router, prefix="/api/v1")       # Run data: attacks, defences, evaluations, stats
+app.include_router(manual_router, prefix="/api/v1")     # Manual session and turn management
 
 
 # Root endpoint
@@ -214,8 +217,9 @@ app.mount("/socket.io", socket_app)
 if __name__ == "__main__":
     import uvicorn
     
-    host = os.getenv("SERVER_HOST", "0.0.0.0")
-    port = int(os.getenv("SERVER_PORT", "8000"))
+    _s = get_settings()
+    host = _s.host
+    port = _s.port
     reload = os.getenv("SERVER_RELOAD", "true").lower() == "true"
     
     print(f"\n🌐 Starting server on http://{host}:{port}")

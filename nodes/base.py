@@ -3,8 +3,8 @@ Base Node Interface"""
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any
-from engine.state_schema import SystemState
-from engine.debug_utils import debug, tracer, step, warn, err
+from engine.state import SystemState
+from core.logging import debug, tracer, step, warn, err
 
 
 class BaseAdversarialNode(ABC):

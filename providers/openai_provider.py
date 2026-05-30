@@ -6,7 +6,7 @@ Integrates with OpenAI API for GPT models.
 
 from typing import Dict, Any
 from providers.base import BaseLLMProvider
-from engine.debug_utils import debug, tracer, step, warn, err
+from core.logging import debug, tracer, step, warn, err
 
 
 class OpenAIProvider(BaseLLMProvider):

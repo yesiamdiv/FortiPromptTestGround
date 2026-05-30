@@ -15,8 +15,8 @@ DEVELOPER INSTRUCTIONS:
 
 from typing import Dict, Any
 from nodes.base import BaseAdversarialNode
-from engine.state_schema import SystemState, RoutingSignals
-from engine.debug_utils import debug, tracer, step, warn, err
+from engine.state import SystemState, RoutingSignals
+from core.logging import debug, tracer, step, warn, err
 
 
 class RouterNode(BaseAdversarialNode):

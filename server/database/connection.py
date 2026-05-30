@@ -6,8 +6,8 @@ Manages MongoDB connection for the adversarial testing engine.
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from typing import Optional
-import os
-from engine.debug_utils import checkpoint, debug, tracer, step
+from core.logging import checkpoint, debug, tracer, step
+from core.env import get_settings
 
 
 class DatabaseConnection:
@@ -33,9 +33,9 @@ class DatabaseConnection:
             debug("Database already connected")
             return cls._db
         
-        # Get connection details from env if not provided
-        mongo_url = mongo_url or os.getenv("MONGODB_URI", "mongodb://localhost:27017")
-        database_name = database_name or os.getenv("MONGO_DB_NAME", "adversarial_testing")
+        settings = get_settings()
+        mongo_url = mongo_url or settings.mongodb_uri
+        database_name = database_name or settings.mongodb_db_name
         
         tracer("Connecting to MongoDB", mongo_url=mongo_url, database_name=database_name)
         

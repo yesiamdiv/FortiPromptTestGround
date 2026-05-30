@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from server.database.connection import init_db, close_db, get_db
 from server.database.operations import get_db_ops
 from server.run_manager import get_run_manager, RunStatus
-from server.config.models import GraphConfig
+from core.config import GraphConfig
 from datetime import datetime
 
 

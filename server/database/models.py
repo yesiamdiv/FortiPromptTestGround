@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, validator
 from typing import Dict, Any, List, Optional, Literal
 from datetime import datetime
 
-from server.config.models import GraphConfig # Assuming GraphConfig is correctly defined elsewhere and importable
+from core.config import GraphConfig # Assuming GraphConfig is correctly defined elsewhere and importable
 
 # ============================================================================
 # Core Data Models (Preserved)

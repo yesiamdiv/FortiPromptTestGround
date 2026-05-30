@@ -7,7 +7,7 @@ This module contains the actual WebSocket logic that middlewares call.
 
 from typing import Dict, Any
 from server.websocket.socketio_manager import SocketIOManager
-from engine.debug_utils import debug, err, tracer, step
+from core.logging import debug, err, tracer, step
 
 
 class WebSocketOperations:
