@@ -279,6 +279,38 @@ class DefaultEvalNode(BaseAdversarialNode):
         }
 
 
+class SkipEvalNode(BaseAdversarialNode):
+    """Always returns a default 'not breached' evaluation. Skips real evaluation."""
+
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
+        if runtime_config is None: runtime_config = {}
+        tracer("SkipEvalNode.execute")
+
+        if "current_turn" not in state:
+            raise ValueError("Corrupted state: Missing 'current_turn'.")
+        current_turn = state["current_turn"]
+
+        eval_result = create_eval_result(
+            score=0.0,
+            success=False,
+            category="benign_response",
+            reasoning="Evaluation skipped by SkipEvalNode. Defaulting to not breached.",
+            skipped=True
+        )
+
+        updated_turn = update_turn_data(current_turn, evaluation=eval_result, node_name="eval")
+        step("SkipEvalNode: default not-breached result returned")
+        return {"current_turn": updated_turn}
+
+    @classmethod
+    def get_node_schema(cls) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {},
+            "description": "Skips real evaluation and returns a default not-breached result."
+        }
+
+
 class RouterNode(BaseAdversarialNode):
     """Delegates routing decision to the strategy."""
 

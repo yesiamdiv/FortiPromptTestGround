@@ -302,3 +302,40 @@ class GlobalStatistics(BaseModel):
 # def validate_field(cls, v):
 #     # validation logic
 #     return v
+
+
+# ============================================================================
+# Unified Session / Turn Models (Phase 2)
+# ============================================================================
+
+class Session(BaseModel):
+    """A conversation-level container. One session = one coherent attack conversation."""
+    session_id: str = Field(..., description="Unique session identifier")
+    run_id: str = Field(..., description="Associated run ID")
+    name: str = Field(..., description="Human-readable session name")
+    description: str = Field(default="", description="Optional description")
+    run_type: Literal["automatic", "batch", "manual", "multiturn"] = Field(
+        ..., description="Run type that created this session"
+    )
+    status: Literal["active", "completed", "failed"] = Field(
+        default="active", description="Current session status"
+    )
+    created_at: str = Field(..., description="ISO timestamp when session was created")
+    updated_at: str = Field(..., description="ISO timestamp when session was last updated")
+    turn_ids: List[str] = Field(default_factory=list, description="Ordered list of turn IDs")
+    total_turns: int = Field(default=0, description="Total number of turns in the session")
+    successful_turns: int = Field(default=0, description="Number of turns with a successful eval")
+
+
+class Turn(BaseModel):
+    """A single attack-defence-evaluation cycle within a session."""
+    turn_id: str = Field(..., description="Unique turn identifier")
+    session_id: str = Field(..., description="Parent session ID")
+    run_id: str = Field(..., description="Associated run ID")
+    index: int = Field(..., description="Position of this turn within its session (0-indexed)")
+    attack_data_id: Optional[str] = Field(None, description="Reference to AttackData document")
+    defence_data_id: Optional[str] = Field(None, description="Reference to DefenceData document")
+    evaluation_data_id: Optional[str] = Field(None, description="Reference to EvaluationData document")
+    created_at: str = Field(..., description="ISO timestamp when turn was created")
+    updated_at: str = Field(..., description="ISO timestamp when turn was last updated")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional turn metadata")

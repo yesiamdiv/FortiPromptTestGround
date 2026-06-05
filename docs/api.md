@@ -290,3 +290,93 @@ Real-time progress is broadcast over Socket.IO at `/socket.io`. Connect and list
 | `run_error` | `{ run_id, error }` | Run fails |
 
 See `docs/SOCKETIO_CLIENT_GUIDE.md` for client connection examples.
+
+---
+
+## Phase 2 — Session / Turn Endpoints
+
+These endpoints expose the unified Session/Turn data model introduced in Phase 2.
+All run types (automatic, batch, manual, multiturn) write to these collections.
+
+### `GET /runs/{run_id}/sessions`
+
+List all sessions for a run, ordered by creation time.
+
+**Response**
+```json
+{
+  "sessions": [
+    {
+      "session_id": "sess_run_abc123",
+      "run_id": "run_abc123",
+      "name": "My Run",
+      "run_type": "automatic",
+      "status": "completed",
+      "total_turns": 5,
+      "successful_turns": 3,
+      "created_at": "2024-01-01T12:00:00",
+      "updated_at": "2024-01-01T12:05:00"
+    }
+  ]
+}
+```
+
+---
+
+### `GET /runs/{run_id}/sessions/{session_id}`
+
+Get session detail plus computed stats.
+
+**Response**
+```json
+{
+  "session": { ... },
+  "stats": {
+    "total_turns": 5,
+    "turns_with_evaluation": 5
+  }
+}
+```
+
+---
+
+### `GET /runs/{run_id}/sessions/{session_id}/turns`
+
+List all turns for a session with linked attack / defence / evaluation data resolved inline.
+
+**Response**
+```json
+{
+  "turns": [
+    {
+      "turn_id": "turn_abc",
+      "session_id": "sess_run_abc123",
+      "index": 0,
+      "attack_data_id": "66a1b2c3d4e5f6...",
+      "defence_data_id": "66a1b2c3d4e5f7...",
+      "evaluation_data_id": "66a1b2c3d4e5f8...",
+      "attack": { "prompt": "...", ... },
+      "defence": { "response": "...", ... },
+      "evaluation": { "score": 0.85, ... }
+    }
+  ]
+}
+```
+
+---
+
+### `GET /runs/{run_id}/sessions/{session_id}/turns/{turn_id}`
+
+Get a single turn with all linked data resolved.
+
+---
+
+## Deprecated Endpoints
+
+The following flat endpoints are kept for backward compatibility but are **deprecated**.
+They query the `attacks`, `defences`, and `evaluations` collections directly and do not
+expose Session/Turn relationships. Prefer the Session/Turn endpoints above.
+
+- `GET /runs/{run_id}/attacks`
+- `GET /runs/{run_id}/defences`
+- `GET /runs/{run_id}/evaluations`

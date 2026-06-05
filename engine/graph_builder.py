@@ -24,6 +24,7 @@ from engine.state import SystemState, RoutingSignals, TurnData, create_initial_s
 from engine.registry import get_node_registry, get_strategy_registry, get_provider_registry
 from core.config import GraphConfig, AttackNodeConfig, DefenseNodeConfig, EvaluationNodeConfig, StrategyConfig, BaseNodeConfig
 from nodes.base import BaseAdversarialNode
+from nodes.router_node import PostAttackRouter, PostDefenceRouter
 from nodes.batch_wrapper_node import BatchWrapperNode
 from core.logging import debug, tracer, step, checkpoint, warn, err
 from core.constants import NodeName
@@ -138,6 +139,22 @@ class ConfigurableGraphBuilder:
                 return await router_node_instance.execute(state, runtime_cfg)
             self.graph.add_node("router", router_wrapper)
             step("Added router node")
+
+            # Instantiate PostAttackRouter
+            post_attack_router_instance = PostAttackRouter(config={"strategy": self.strategy})
+            async def post_attack_router_wrapper(state: SystemState, config: Dict[str, Any] = None, _n=post_attack_router_instance) -> Dict[str, Any]:
+                runtime_cfg = config.get("configurable", {}) if config else {}
+                return await _n.execute(state, runtime_cfg)
+            self.graph.add_node("post_attack_router", post_attack_router_wrapper)
+            step("Added post_attack_router node")
+
+            # Instantiate PostDefenceRouter
+            post_defence_router_instance = PostDefenceRouter(config={"strategy": self.strategy})
+            async def post_defence_router_wrapper(state: SystemState, config: Dict[str, Any] = None, _n=post_defence_router_instance) -> Dict[str, Any]:
+                runtime_cfg = config.get("configurable", {}) if config else {}
+                return await _n.execute(state, runtime_cfg)
+            self.graph.add_node("post_defence_router", post_defence_router_wrapper)
+            step("Added post_defence_router node")
             
         except ValueError as e:
             raise ValueError(f"Error instantiating graph nodes: {e}") from e
@@ -145,20 +162,38 @@ class ConfigurableGraphBuilder:
         self.graph.set_entry_point("init") 
         self.graph.add_node("init", self._initialization_node)
 
-        self.graph.add_edge("init", "router")
-        
+        # New topology: init → attack → post_attack_router → defence → post_defence_router → eval → router
+        self.graph.add_edge("init", "attack")
+
+        self.graph.add_edge("attack", "post_attack_router")
         self.graph.add_conditional_edges(
-            "router",
-            self.router_routing_logic, 
+            "post_attack_router",
+            self.router_routing_logic,
             {
-                RoutingSignals.ATTACK: RoutingSignals.ATTACK,
-                RoutingSignals.CONTINUE: RoutingSignals.ATTACK, 
-                RoutingSignals.END: END
+                RoutingSignals.PROCEED: "defence",
             }
         )
-        self.graph.add_edge("attack", "defence")
-        self.graph.add_edge("defence", "eval")
+
+        self.graph.add_edge("defence", "post_defence_router")
+        self.graph.add_conditional_edges(
+            "post_defence_router",
+            self.router_routing_logic,
+            {
+                RoutingSignals.PROCEED: "eval",
+                RoutingSignals.CONTINUE_CONVERSATION: "attack",
+            }
+        )
+
         self.graph.add_edge("eval", "router")
+        self.graph.add_conditional_edges(
+            "router",
+            self.router_routing_logic,
+            {
+                RoutingSignals.ATTACK: "attack",
+                RoutingSignals.CONTINUE: "attack",
+                RoutingSignals.END: END,
+            }
+        )
         checkpoint("Graph edges configured")
 
     def _initialization_node(self, state: SystemState, config: Dict[str, Any] = None) -> Dict[str, Any]:

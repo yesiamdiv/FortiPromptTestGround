@@ -15,7 +15,9 @@ from server.database.models import (
     EvaluationData,
     RunStatistics,
     ManualTurn,
-    ManualSession
+    ManualSession,
+    Session,
+    Turn,
 )
 from core.logging import checkpoint, debug, err, tracer, step
 from core.config import GraphConfig
@@ -44,8 +46,10 @@ class DatabaseOperations:
         self.attacks = db.attacks
         self.defences = db.defences
         self.evaluations = db.evaluations
-        self.manual_sessions = db.manual_sessions  # New collection for manual sessions
-        self.manual_turns = db.manual_turns      # New collection for manual turns
+        self.manual_sessions = db.manual_sessions
+        self.manual_turns = db.manual_turns
+        self.sessions = db.sessions  # Unified sessions collection
+        self.turns = db.turns        # Unified turns collection
     
     # ========================================================================
     # Run Operations
@@ -681,17 +685,159 @@ class DatabaseOperations:
         return [ManualSession(**{k: v for k, v in d.items() if k != "_id"}) for d in docs]
 
     # ========================================================================
-    # Convenience function
+    # Unified Session Operations
     # ========================================================================
 
+    async def create_session(
+        self,
+        session_id: str,
+        run_id: str,
+        name: str,
+        run_type: str,
+        description: str = "",
+    ) -> str:
+        """Create a new session document in the unified sessions collection."""
+        tracer("Creating session", session_id=session_id, run_id=run_id, run_type=run_type)
+        now = datetime.utcnow().isoformat()
+        session_doc = {
+            "session_id": session_id,
+            "run_id": run_id,
+            "name": name,
+            "description": description,
+            "run_type": run_type,
+            "status": "active",
+            "created_at": now,
+            "updated_at": now,
+            "turn_ids": [],
+            "total_turns": 0,
+            "successful_turns": 0,
+        }
+        await self.sessions.insert_one(session_doc)
+        step("Session created", session_id=session_id)
+        return session_id
+
+    async def get_session(self, session_id: str) -> Optional[Session]:
+        """Get a session by ID from the unified sessions collection."""
+        debug("Getting session", session_id=session_id)
+        doc = await self.sessions.find_one({"session_id": session_id})
+        if doc:
+            doc.pop("_id", None)
+            return Session(**doc)
+        return None
+
+    async def update_session(self, session_id: str, **fields) -> None:
+        """Update fields on a session document."""
+        debug("Updating session", session_id=session_id, fields=list(fields.keys()))
+        fields["updated_at"] = datetime.utcnow().isoformat()
+        await self.sessions.update_one(
+            {"session_id": session_id},
+            {"$set": fields}
+        )
+
+    async def get_sessions_for_run(self, run_id: str) -> list:
+        """List all sessions for a run, ordered by creation time."""
+        tracer("Getting sessions for run", run_id=run_id)
+        cursor = self.sessions.find({"run_id": run_id}).sort("created_at", 1)
+        docs = await cursor.to_list(length=None)
+        step(f"Found {len(docs)} sessions", run_id=run_id)
+        return [Session(**{k: v for k, v in d.items() if k != "_id"}) for d in docs]
+
+    # ========================================================================
+    # Unified Turn Operations
+    # ========================================================================
+
+    async def create_turn(
+        self,
+        session_id: str,
+        turn_id: str,
+        run_id: str,
+        index: int,
+    ) -> str:
+        """Create a new turn document and append its ID to the parent session."""
+        tracer("Creating turn", turn_id=turn_id, session_id=session_id, index=index)
+        now = datetime.utcnow().isoformat()
+        turn_doc = {
+            "turn_id": turn_id,
+            "session_id": session_id,
+            "run_id": run_id,
+            "index": index,
+            "attack_data_id": None,
+            "defence_data_id": None,
+            "evaluation_data_id": None,
+            "created_at": now,
+            "updated_at": now,
+            "metadata": {},
+        }
+        await self.turns.insert_one(turn_doc)
+        await self.sessions.update_one(
+            {"session_id": session_id},
+            {
+                "$push": {"turn_ids": turn_id},
+                "$inc": {"total_turns": 1},
+                "$set": {"updated_at": now},
+            },
+        )
+        step("Turn created", turn_id=turn_id, index=index)
+        return turn_id
+
+    async def update_turn_references(
+        self,
+        turn_id: str,
+        attack_data_id: Optional[str] = None,
+        defence_data_id: Optional[str] = None,
+        evaluation_data_id: Optional[str] = None,
+    ) -> None:
+        """Link AttackData / DefenceData / EvaluationData IDs into a turn document."""
+        debug("Updating turn references", turn_id=turn_id)
+        updates: dict = {"updated_at": datetime.utcnow().isoformat()}
+        if attack_data_id is not None:
+            updates["attack_data_id"] = attack_data_id
+        if defence_data_id is not None:
+            updates["defence_data_id"] = defence_data_id
+        if evaluation_data_id is not None:
+            updates["evaluation_data_id"] = evaluation_data_id
+        await self.turns.update_one({"turn_id": turn_id}, {"$set": updates})
+
+    async def get_turn(self, turn_id: str) -> Optional[Turn]:
+        """Get a turn by ID."""
+        debug("Getting turn", turn_id=turn_id)
+        doc = await self.turns.find_one({"turn_id": turn_id})
+        if doc:
+            doc.pop("_id", None)
+            return Turn(**doc)
+        return None
+
+    async def get_turns_for_session(self, session_id: str) -> list:
+        """Get all turns for a session, ordered by index."""
+        tracer("Getting turns for session", session_id=session_id)
+        cursor = self.turns.find({"session_id": session_id}).sort("index", 1)
+        docs = await cursor.to_list(length=None)
+        step(f"Found {len(docs)} turns", session_id=session_id)
+        return [Turn(**{k: v for k, v in d.items() if k != "_id"}) for d in docs]
+
+    async def get_last_turn_for_session(self, session_id: str) -> Optional[Turn]:
+        """Get the most recent turn in a session."""
+        debug("Getting last turn", session_id=session_id)
+        docs = await self.turns.find(
+            {"session_id": session_id}
+        ).sort("index", -1).limit(1).to_list(length=1)
+        if docs:
+            docs[0].pop("_id", None)
+            return Turn(**docs[0])
+        return None
+
+
+# ========================================================================
 # Convenience function
+# ========================================================================
+
 def get_db_ops(db: AsyncIOMotorDatabase) -> DatabaseOperations:
     """
     Create DatabaseOperations instance.
-    
+
     Args:
         db: MongoDB database
-    
+
     Returns:
         DatabaseOperations instance
     """

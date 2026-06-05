@@ -41,7 +41,7 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
         runtime_config: Dict[str, Any], 
         run_id: str
     ) -> None:
-        """Log run start - database run record created elsewhere"""
+        """Create a Session for this run and record started_at."""
         tracer("AutomaticDatabaseMiddleware.before_run", run_id=run_id)
         
         db = get_db()
@@ -50,21 +50,26 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
             return
         
         try:
-            # Access typed state properties
-            config_dict = state.get("config", {})
-            strategy_config = config_dict.get("strategy_config", {})
-            strategy_name = strategy_config.get("strategy_name", "unknown_strategy")
-            
-            payload = state.get("payload", {})
-            intent = payload.get('intent', 'unknown')
-            
-            debug("Automatic run starting", strategy=strategy_name, intent=intent)
-            
-            # 2-B5: Persist started_at when run begins
-            db_ops = get_db_ops(db)
             from datetime import datetime
+            db_ops = get_db_ops(db)
             _now = datetime.utcnow().isoformat()
+
+            # Persist started_at on the run document
             await db_ops.update_run(run_id, {"started_at": _now, "updated_at": _now})
+
+            # Create one Session per automatic run
+            session_id = f"sess_{run_id}"
+            run_doc = await db_ops.get_run(run_id)
+            run_name = run_doc.name if run_doc else run_id
+            await db_ops.create_session(
+                session_id=session_id,
+                run_id=run_id,
+                name=run_name,
+                run_type="automatic",
+            )
+            state["session_id"] = session_id
+            state["turn_index"] = 0
+            step("Session created for automatic run", session_id=session_id)
             
         except Exception as e:
             err("Error in before_run", error=str(e))
@@ -75,7 +80,7 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
         run_id: str, 
         node_name: Optional[str] = None
     ) -> None:
-        """Save step data to database"""
+        """Save step data to database and maintain Session/Turn references."""
         db = get_db()
         if db is None:
             return
@@ -85,23 +90,29 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
         
         try:
             db_ops = get_db_ops(db)
-            
-            # Extract iteration context
             context = state.get("strategy_context", {})
-            iteration = context.get("iteration_count", 0) 
-            # 5-B4: turn_id lives in current_turn, not strategy_context
-            turn_id = state.get("current_turn", {}).get("turn_id") or context.get("turn_id", f"turn_{iteration}")
-            
-            # Route based on node name
+            iteration = context.get("iteration_count", 0)
+            turn_id = state.get("current_turn", {}).get("turn_id") or f"turn_{iteration}"
+            session_id = state.get("session_id", f"sess_{run_id}")
+            turn_index = state.get("turn_index", iteration)
+
             if node_name == NodeName.ATTACK and self.middleware_config.get("save_attacks"):
-                await self._save_attack(db_ops, run_id, iteration, state, turn_id)
+                # Create the Turn document on attack (first step of each cycle)
+                await db_ops.create_turn(session_id, turn_id, run_id, index=turn_index)
+                attack_id = await self._save_attack(db_ops, run_id, iteration, state, turn_id)
+                if attack_id:
+                    await db_ops.update_turn_references(turn_id, attack_data_id=attack_id)
             
             elif node_name == NodeName.DEFENCE and self.middleware_config.get("save_defences"):
-                await self._save_defence(db_ops, run_id, iteration, state, turn_id)
+                defence_id = await self._save_defence(db_ops, run_id, iteration, state, turn_id)
+                if defence_id:
+                    await db_ops.update_turn_references(turn_id, defence_data_id=defence_id)
             
             elif node_name == NodeName.EVAL and self.middleware_config.get("save_evaluations"):
-                await self._save_evaluation(db_ops, run_id, iteration, state, turn_id)
-                # 5-B5: Increment iteration counters
+                eval_id = await self._save_evaluation(db_ops, run_id, iteration, state, turn_id)
+                if eval_id:
+                    await db_ops.update_turn_references(turn_id, evaluation_data_id=eval_id)
+                # Increment run-level counters
                 current_turn = state.get("current_turn", {})
                 eval_obj = current_turn.get("evaluation")
                 success = eval_obj.success if eval_obj and hasattr(eval_obj, "success") else False
@@ -109,6 +120,8 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
                 if success:
                     inc_update["$inc"]["successful_iterations"] = 1
                 await db_ops.runs.update_one({"run_id": run_id}, inc_update)
+                # Advance turn_index for next cycle
+                state["turn_index"] = turn_index + 1
             
         except Exception as e:
             err("Error in after_step", error=str(e), node=node_name)
@@ -199,14 +212,15 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
             return
         
         # ✓ REFACTORED: Use .to_string() method and direct .metadata access
-        await db_ops.save_attack(
+        attack_id = await db_ops.save_attack(
             run_id=run_id,
             index=iteration,
             turn_id=turn_id,
-            prompt=attack.to_string(),  # Method that returns string
-            metadata=attack.metadata     # Direct property access
+            prompt=attack.to_string(),
+            metadata=attack.metadata
         )
         debug("Attack saved", run_id=run_id, iteration=iteration)
+        return attack_id
     
     async def _save_defence(
         self, 
@@ -224,16 +238,17 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
             return
         
         # ✓ REFACTORED: Direct property access instead of getters
-        await db_ops.save_defence(
+        defence_id = await db_ops.save_defence(
             run_id=run_id,
             index=iteration,
             turn_id=turn_id,
-            response=defence.response_text,  # Direct property (was: defence.get_text())
-            status_code=defence.status_code,  # Direct property
-            was_blocked=defence.was_blocked(), # Method with logic (kept as-is)
-            metadata=defence.metadata         # Direct property
+            response=defence.response_text,
+            status_code=defence.status_code,
+            was_blocked=defence.was_blocked(),
+            metadata=defence.metadata
         )
         debug("Defence saved", run_id=run_id, iteration=iteration)
+        return defence_id
     
     async def _save_evaluation(
         self, 
@@ -251,15 +266,16 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
             return
         
         # ✓ REFACTORED: All direct property access
-        await db_ops.save_evaluation(
+        eval_id = await db_ops.save_evaluation(
             run_id=run_id,
             index=iteration,
             turn_id=turn_id,
-            score=evaluation.score,        # Direct property (was: evaluation.get_score())
-            success=evaluation.success,    # Direct property (was: evaluation.is_success())
-            category=evaluation.category,  # Direct property (was: evaluation.get_category())
-            feedback=evaluation.reasoning, # Direct property (was: evaluation.get_reasoning())
-            metadata=evaluation.metadata   # Direct property
+            score=evaluation.score,
+            success=evaluation.success,
+            category=evaluation.category,
+            feedback=evaluation.reasoning,
+            metadata=evaluation.metadata
         )
         debug("Evaluation saved", run_id=run_id, iteration=iteration)
+        return eval_id
 

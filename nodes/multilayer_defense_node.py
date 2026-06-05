@@ -254,18 +254,25 @@ class DefenseSystem:
         if not self.binary_models:
             return {"verdict": None, "votes": 0, "category": None}
 
-        votes = sum(int(clf.predict([text])[0] == 1) for clf in self.binary_models.values())
-        verdict = "MALICIOUS" if votes >= self.ENSEMBLE_VOTE_THRESHOLD else "BENIGN"
+        clean = text.lower().strip()
+        X = self.vectorizer.transform([clean]) if self.vectorizer else None
 
-        category = None
-        if self.category_lr and self.label_encoder_lr:
+        preds = []
+        for name, model in self.binary_models.items():
+            inp = [clean] if isinstance(model, Pipeline) else X
             try:
-                cat_pred = int(self.category_lr.predict([text])[0])
-                category = str(self.label_encoder_lr.inverse_transform([cat_pred])[0])
-            except:
-                pass
+                pred = int(model.predict(inp)[0])
+                prob = float(model.predict_proba(inp)[0][1])
+            except Exception:
+                pred = int(model.predict(inp)[0])
+                prob = 0.5
+            preds.append({"name": name, "pred": pred, "conf": prob})
 
-        return {"verdict": verdict, "votes": int(votes), "category": category}
+        votes = sum(r["pred"] for r in preds)
+        verdict = "MALICIOUS" if votes >= self.ENSEMBLE_VOTE_THRESHOLD else "BENIGN"
+        avg_conf = sum(r["conf"] for r in preds) / len(preds) if preds else 0.0
+
+        return {"verdict": verdict, "votes": int(votes), "category": None, "avg_conf": avg_conf, "predictions": preds, "_X": X}
 
     # ── Layer 2: BERT-BiLSTM ──────────────────────────────────────
     def layer2_bert(self, text):
@@ -275,7 +282,7 @@ class DefenseSystem:
         try:
             enc = self.bert_tokenizer(
                 text, return_tensors="pt", padding=True,
-                truncation=True, max_length=512
+                truncation=True, max_length=128
             )
             enc = {k: v.to(self.device) for k, v in enc.items()}
 
@@ -339,18 +346,35 @@ class DefenseSystem:
             print(f"   Harmful detector failed: {e}")
             return {"verdict": None, "confidence": 0.0}
 
+    # ── Category Resolution (replicates FastAPI layer2_category_lr) ──
+    def _resolve_category(self, text, l2_res):
+        if not self.category_lr or not self.label_encoder_lr:
+            return l2_res.get("category", "benign") if l2_res else "benign"
+
+        X = None
+        if self.vectorizer:
+            X = self.vectorizer.transform([text.lower().strip()])
+
+        lr_probs = self.category_lr.predict_proba(X)[0] if X is not None else None
+        if lr_probs is not None:
+            lr_idx = lr_probs.argmax()
+            lr_cat = str(self.label_encoder_lr.inverse_transform([lr_idx])[0])
+            lr_conf = float(lr_probs[lr_idx])
+        else:
+            lr_cat = "benign"
+            lr_conf = 0.0
+
+        if l2_res and l2_res.get("confidence", 0) >= self.BERT_CATEGORY_CONF:
+            return l2_res.get("category", lr_cat)
+        return lr_cat
+
     # ── Main Prediction Pipeline ──────────────────────────────────
     def predict(self, text: str) -> Dict[str, Any]:
         """
         Execute the multi-layer defense pipeline.
         
-        Returns a dict with:
-        - blocked_at: str or None (which layer blocked)
-        - decision_source: str (reason for decision)
-        - category: str (attack category)
-        - confidence: float (0-1)
-        - is_malicious: bool
-        - l1_verdict, l2_verdict, l3_verdict: layer details
+        No early exit on L1 — always proceeds to L2/L3 (matching FastAPI flow).
+        L1 MALICIOUS continues to deeper layers rather than blocking immediately.
         """
         result = {
             "blocked_at": None,
@@ -366,68 +390,55 @@ class DefenseSystem:
         l1 = self.layer1_ensemble(text)
         result["l1_verdict"] = l1
 
-        if l1["verdict"] == "BENIGN":
-            result["decision_source"] = "L1_ENSEMBLE_BENIGN"
-            result["category"] = l1.get("category", "benign")
-            return result
-
         # ── Layer 2 ───────────────────────────────────────────────
         l2 = self.layer2_bert(text)
         result["l2_verdict"] = l2
 
-        # High confidence BERT override
-        if l2["confidence"] >= self.BERT_OVERRIDE_CONF:
-            if l2["verdict"] == "BENIGN":
-                result["decision_source"] = "L2_BERT_HIGH_CONFIDENCE_OVERRIDE"
-                result["category"] = l2.get("category", "benign")
-                result["confidence"] = float(l2["confidence"])
-                return result
-            else:
-                result["blocked_at"] = "L2_BERT"
-                result["decision_source"] = "L2_BERT_HIGH_CONFIDENCE_BLOCK"
-                result["category"] = l2.get("category", "malicious")
-                result["confidence"] = float(l2["confidence"])
-                return result
+        l2_flag = False
+        decision_source = "ENSEMBLE_ONLY"
 
-        # Medium confidence + L1 agreement
-        if l2["confidence"] >= self.BERT_MEDIUM_CONF:
-            if l2["verdict"] == "MALICIOUS" and l1["verdict"] == "MALICIOUS":
-                result["blocked_at"] = "L2_BERT+L1_AGREEMENT"
-                result["decision_source"] = "L2_BERT_MEDIUM_CONFIDENCE_WITH_L1"
-                category = (
-                    l2.get("category")
-                    if l2["confidence"] >= self.BERT_CATEGORY_CONF
-                    else l1.get("category", "malicious")
-                )
-                result["category"] = category
-                result["confidence"] = float(l2["confidence"])
-                return result
-
-        # Low confidence -> use L1
-        if l1["verdict"] == "MALICIOUS":
-            # Before blocking, check L3
-            pass
-        else:
-            result["decision_source"] = "L1_AND_L2_BENIGN"
-            result["category"] = l2.get("category", "benign")
-            result["confidence"] = float(l2["confidence"])
-            return result
+        if l2["confidence"] is not None:
+            if l2["confidence"] >= self.BERT_OVERRIDE_CONF:
+                l2_flag = l2["verdict"] == "MALICIOUS"
+                decision_source = "BERT"
+            elif l2["confidence"] >= self.BERT_MEDIUM_CONF:
+                l2_flag = l2["verdict"] == "MALICIOUS"
+                decision_source = "BERT+ENSEMBLE"
 
         # ── Layer 3 (Final Gate) ──────────────────────────────────
         l3 = self.layer3_harmful(text)
         result["l3_verdict"] = l3
 
-        if l3["verdict"] == "MALICIOUS" and l3["confidence"] >= self.HARMFUL_CONF_THRESHOLD:
-            result["blocked_at"] = "L3_HARMFUL_DETECTOR"
-            result["decision_source"] = "L3_HARMFUL_CONTENT"
-            result["category"] = l2.get("category", "harmful_content")
-            result["confidence"] = float(l3["confidence"])
+        harmful_flagged = (
+            l3["verdict"] == "MALICIOUS" and l3["confidence"] >= self.HARMFUL_CONF_THRESHOLD
+        )
+
+        # ── Decision ──────────────────────────────────────────────
+        if l2_flag or harmful_flagged:
+            if l2_flag and harmful_flagged:
+                blocked_at = "L2+3_BERT_HARMFUL"
+            elif l2_flag:
+                blocked_at = "L2_BERT"
+            else:
+                blocked_at = "L3_HARMFUL_DETECTOR"
+
+            cat = self._resolve_category(text, l2)
+            result["blocked_at"] = blocked_at
+            result["decision_source"] = decision_source
+            result["category"] = cat if cat.lower() != "benign" else "harmful_content"
+            result["confidence"] = float(max(
+                l2.get("confidence", 0) if l2["confidence"] is not None else 0,
+                l3.get("confidence", 0),
+            ))
             return result
 
         # ── All layers passed → ALLOW ─────────────────────────────
         result["decision_source"] = "ALL_LAYERS_PASSED"
-        result["category"] = l2.get("category", "benign")
-        result["confidence"] = float(max(l2.get("confidence", 0), l3.get("confidence", 0)))
+        result["category"] = self._resolve_category(text, l2)
+        result["confidence"] = float(max(
+            l2.get("confidence", 0) if l2["confidence"] is not None else 0,
+            l3.get("confidence", 0),
+        ))
         return result
 
 

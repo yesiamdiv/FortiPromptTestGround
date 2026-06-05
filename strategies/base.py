@@ -4,7 +4,7 @@ Base Strategy Interface
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any
-from engine.state import SystemState
+from engine.state import SystemState, RoutingSignals
 from core.logging import debug, tracer, step
 
 class AttackStrategy(ABC):
@@ -42,6 +42,22 @@ class AttackStrategy(ABC):
         or a dictionary containing {"routing_signal": signal}.
         """
         raise NotImplementedError
+
+    def route_post_attack(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> str:
+        """Routing signal after the attack node. Default: proceed to defence.
+
+        Override in strategies that need to retry or branch after attack
+        (e.g. quality-gate before sending to defence).
+        """
+        return RoutingSignals.PROCEED
+
+    def route_post_defence(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> str:
+        """Routing signal after the defence node. Default: proceed to eval.
+
+        Override in multi-turn strategies to return CONTINUE_CONVERSATION
+        when the session should loop back to attack without evaluating yet.
+        """
+        return RoutingSignals.PROCEED
 
     @classmethod
     @abstractmethod

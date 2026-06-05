@@ -184,3 +184,72 @@ All environment-sourced configuration lives in `core/env.py`. Copy `.env.example
 - `server/main.py` — CORS origins, host, port
 - `providers/ollama_provider.py` — Ollama base URL
 - `core/logging.py` — debug enabled flag and minimum log level
+
+---
+
+## Phase 2 — Multi-Turn Graph Topology
+
+Phase 2 introduces two intermediate router nodes and the unified Session/Turn model.
+
+### New Graph Topology
+
+```
+init
+ │
+ ▼
+attack ──────────────────────────────────────────────┐
+ │                                                   │ CONTINUE_CONVERSATION
+ ▼                                                   │
+post_attack_router  ──PROCEED──►  defence            │
+                                   │                 │
+                                   ▼                 │
+                              post_defence_router ───┘
+                                   │
+                                   │ PROCEED
+                                   ▼
+                                  eval
+                                   │
+                                   ▼
+                                 router
+                                   │
+                    ┌──────────────┴──────────────┐
+                    │ ATTACK                       │ END
+                    ▼                             ▼
+                  attack                         __end__
+```
+
+**PostAttackRouter** — delegates to `strategy.route_post_attack()`. Currently always
+returns `PROCEED`. Reserved for future strategies that need to gate on attack quality
+before sending to the defence system.
+
+**PostDefenceRouter** — delegates to `strategy.route_post_defence()`. Default: `PROCEED`
+(→ eval). `MultiTurnStrategy` returns `CONTINUE_CONVERSATION` to loop back to attack
+within the same session.
+
+### Session / Turn Model
+
+Every run now creates at least one **Session** document and one **Turn** document per
+attack→defence→eval cycle:
+
+```
+Run (runs collection)
+ └── Session (sessions collection)  [1 per run for automatic/batch; 1+ for multiturn]
+      └── Turn (turns collection)   [1 per attack→defence→eval cycle]
+           ├── attack_data_id  ──► AttackData   (attacks collection)
+           ├── defence_data_id ──► DefenceData  (defences collection)
+           └── evaluation_data_id ──► EvaluationData (evaluations collection)
+```
+
+The reference model (IDs, not embedded documents) keeps each collection independently
+queryable and prevents field conflicts when schemas evolve independently.
+
+### MultiTurnStrategy
+
+`MultiTurnStrategy` uses `route_post_defence` to loop within a session:
+
+- `sessions_per_run` independent sessions are executed sequentially.
+- Each session runs `max_turns_per_session` attack→defence cycles before evaluating.
+- The conversation history (attacker messages + target responses) is accumulated in
+  `strategy_context["conversation_history"]` and used to generate contextually-aware
+  follow-up attacks.
+- After evaluation, `route()` starts the next session (`ATTACK`) or ends the run (`END`).

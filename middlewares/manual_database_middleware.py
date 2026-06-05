@@ -42,7 +42,7 @@ class ManualDatabaseMiddleware(BaseMiddleware):
         runtime_config: Dict[str, Any], 
         run_id: str
     ) -> None:
-        """Initialize manual run - hydrate from last turn or start fresh"""
+        """Initialize manual run — hydrate iteration count from last turn, create new Turn."""
         tracer("ManualDatabaseMiddleware.before_run", run_id=run_id)
         
         db = get_db()
@@ -52,9 +52,6 @@ class ManualDatabaseMiddleware(BaseMiddleware):
         
         try:
             db_ops = get_db_ops(db)
-            config_dict = state.get("config", {})
-            strategy_config = config_dict.get("strategy_config", {})
-            strategy_name = strategy_config.get("strategy_name", "unknown_strategy")
             payload = state.get("payload", {})
             
             session_id = payload.get("session_id")
@@ -62,16 +59,24 @@ class ManualDatabaseMiddleware(BaseMiddleware):
                 err("Missing session_id for manual run")
                 raise ValueError("Manual run requires a 'session_id' in the payload")
             
-            # Hydrate from last turn
-            last_manual_turn = await db_ops.get_last_manual_turn_for_session(session_id)
-            
+            # Try to resume from an existing unified session; create it if this is the first turn
+            existing_session = await db_ops.get_session(session_id)
+            if not existing_session:
+                run_doc = await db_ops.get_run(run_id)
+                run_name = run_doc.name if run_doc else run_id
+                await db_ops.create_session(
+                    session_id=session_id,
+                    run_id=run_id,
+                    name=run_name,
+                    run_type="manual",
+                )
+
+            # Hydrate iteration count from last unified turn
+            last_turn = await db_ops.get_last_turn_for_session(session_id)
             strategy_context = state.get("strategy_context", {})
-            if last_manual_turn:
-                debug("Hydrating state from last turn", turn=last_manual_turn.turn_id)
-                # ManualTurn has no attack_prompt field — only attack_data_id.
-                # History is rebuilt by ManualStrategy from the conversation payload;
-                # we only need to restore the iteration count.
-                strategy_context["iteration_count"] = last_manual_turn.index + 1
+            if last_turn:
+                debug("Hydrating state from last turn", turn=last_turn.turn_id)
+                strategy_context["iteration_count"] = last_turn.index + 1
                 if "history" not in strategy_context:
                     strategy_context["history"] = []
             else:
@@ -81,26 +86,27 @@ class ManualDatabaseMiddleware(BaseMiddleware):
             
             strategy_context["session_id"] = session_id
             strategy_context["max_turns"] = self.middleware_config.get("max_turns", 100)
-            
             state["strategy_context"] = strategy_context
-            
-            # Create new turn
+
+            # Create new turn document
             current_turn_id = f"turn_{uuid.uuid4().hex[:8]}"
+            turn_index = strategy_context["iteration_count"]
             state["current_turn"] = {"turn_id": current_turn_id}
             state["session_id"] = session_id
+            state["turn_index"] = turn_index
             
             # Persist started_at on the very first turn
-            if strategy_context.get("iteration_count", 0) == 0:
+            if turn_index == 0:
                 _now = datetime.utcnow().isoformat()
                 await db_ops.update_run(run_id, {"started_at": _now, "updated_at": _now})
             
-            await db_ops.create_manual_turn(
+            await db_ops.create_turn(
                 session_id=session_id,
                 turn_id=current_turn_id,
                 run_id=run_id,
-                index=state['strategy_context']['iteration_count']
+                index=turn_index,
             )
-            step("Manual turn created", turn=current_turn_id, session=session_id)
+            step("Turn created", turn=current_turn_id, session=session_id, index=turn_index)
             
         except ValueError as e:
             err("Configuration error in before_run", error=str(e))
@@ -135,13 +141,19 @@ class ManualDatabaseMiddleware(BaseMiddleware):
                 return
             
             if node_name == NodeName.ATTACK and self.middleware_config.get("save_attacks"):
-                await self._save_attack(db_ops, run_id, session_id, iteration, state, current_turn_id)
+                attack_id = await self._save_attack(db_ops, run_id, session_id, iteration, state, current_turn_id)
+                if attack_id:
+                    await db_ops.update_turn_references(current_turn_id, attack_data_id=attack_id)
             
             elif node_name == NodeName.DEFENCE and self.middleware_config.get("save_defences"):
-                await self._save_defence(db_ops, run_id, session_id, iteration, state, current_turn_id)
+                defence_id = await self._save_defence(db_ops, run_id, session_id, iteration, state, current_turn_id)
+                if defence_id:
+                    await db_ops.update_turn_references(current_turn_id, defence_data_id=defence_id)
             
             elif node_name == NodeName.EVAL and self.middleware_config.get("save_evaluations"):
-                await self._save_evaluation(db_ops, run_id, session_id, iteration, state, current_turn_id)
+                eval_id = await self._save_evaluation(db_ops, run_id, session_id, iteration, state, current_turn_id)
+                if eval_id:
+                    await db_ops.update_turn_references(current_turn_id, evaluation_data_id=eval_id)
             
         except Exception as e:
             err("Error in after_step", error=str(e), node=node_name)
@@ -192,11 +204,11 @@ class ManualDatabaseMiddleware(BaseMiddleware):
                 "updated_at": datetime.utcnow().isoformat()
             })
             
-            await db_ops.update_manual_session_state(
-                session_id=session_id,
-                run_id=run_id,
+            await db_ops.update_session(
+                session_id,
                 final_score=final_score,
-                best_score=best_score
+                best_score=best_score,
+                status="active",
             )
             
             step("Manual run turn completed, state saved, set to IDLE", run_id=run_id)
@@ -223,86 +235,78 @@ class ManualDatabaseMiddleware(BaseMiddleware):
             err("Error in on_error handler", error=str(e))
     
     async def _save_attack(
-        self, 
-        db_ops, 
-        run_id: str, 
-        session_id: str, 
-        iteration: int, 
-        state: SystemState, 
-        turn_id: str
-    ) -> None:
-        """Save attack data"""
+        self,
+        db_ops,
+        run_id: str,
+        session_id: str,
+        iteration: int,
+        state: SystemState,
+        turn_id: str,
+    ) -> str:
+        """Save attack data and return the inserted document ID."""
         current_turn = state.get("current_turn", {})
         attack = current_turn.get("attack")
-        
         if not attack:
-            return
-        
-        # Convert numpy types to Python native types for JSON serialization
-        await db_ops.update_manual_turn_data(
-            session_id=session_id,
+            return None
+        attack_id = await db_ops.save_attack(
+            run_id=run_id,
+            index=iteration,
             turn_id=turn_id,
-            attack_prompt=attack.to_string(),
-            attack_metadata=attack.metadata,
-            turn_index=int(iteration)
+            prompt=attack.to_string(),
+            metadata=attack.metadata,
         )
         debug("Attack saved", turn=turn_id)
-    
+        return attack_id
+
     async def _save_defence(
-        self, 
-        db_ops:DatabaseOperations, 
-        run_id: str, 
-        session_id: str, 
-        iteration: int, 
-        state: SystemState, 
-        turn_id: str
-    ) -> None:
-        """Save defence data"""
+        self,
+        db_ops,
+        run_id: str,
+        session_id: str,
+        iteration: int,
+        state: SystemState,
+        turn_id: str,
+    ) -> str:
+        """Save defence data and return the inserted document ID."""
         current_turn = state.get("current_turn", {})
         defence = current_turn.get("defence")
-        
         if not defence:
-            return
-        
-        # ✓ REFACTORED: Direct property access
-        # Convert numpy types to Python native types for JSON serialization
-        await db_ops.update_manual_turn_data(
-            session_id=session_id,
+            return None
+        defence_id = await db_ops.save_defence(
+            run_id=run_id,
+            index=iteration,
             turn_id=turn_id,
-            defence_response=defence.response_text,  # Direct property
-            defence_status_code=int(defence.status_code),
-            defence_was_blocked=bool(defence.was_blocked()),
-            defence_metadata=defence.metadata,
-            turn_index=int(iteration)
+            response=defence.response_text,
+            status_code=defence.status_code,
+            was_blocked=defence.was_blocked(),
+            metadata=defence.metadata,
         )
         debug("Defence saved", turn=turn_id)
-    
+        return defence_id
+
     async def _save_evaluation(
-        self, 
-        db_ops, 
-        run_id: str, 
-        session_id: str, 
-        iteration: int, 
-        state: SystemState, 
-        turn_id: str
-    ) -> None:
-        """Save evaluation data"""
+        self,
+        db_ops,
+        run_id: str,
+        session_id: str,
+        iteration: int,
+        state: SystemState,
+        turn_id: str,
+    ) -> str:
+        """Save evaluation data and return the inserted document ID."""
         current_turn = state.get("current_turn", {})
         evaluation = current_turn.get("evaluation")
-        
         if not evaluation:
-            return
-        
-        # ✓ REFACTORED: All direct property access
-        # Convert numpy types to Python native types for JSON serialization
-        await db_ops.update_manual_turn_data(
-            session_id=session_id,
+            return None
+        eval_id = await db_ops.save_evaluation(
+            run_id=run_id,
+            index=iteration,
             turn_id=turn_id,
-            evaluation_score=float(evaluation.score),        # Direct property
-            evaluation_success=bool(evaluation.success),    # Direct property
-            evaluation_category=evaluation.category,  # Direct property
-            evaluation_feedback=evaluation.reasoning, # Direct property
-            evaluation_metadata=evaluation.metadata,
-            turn_index=int(iteration)
+            score=float(evaluation.score),
+            success=evaluation.success,
+            category=evaluation.category,
+            feedback=evaluation.reasoning,
+            metadata=evaluation.metadata,
         )
-        debug("Evaluation saved", turn=turn_id)
+        debug("Evaluation saved", turn=turn_id, score=evaluation.score)
+        return eval_id

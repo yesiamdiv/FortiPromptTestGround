@@ -49,6 +49,8 @@ class SystemState(TypedDict, total=False):
     strategy_context: Annotated[Dict[str, Any], merge_context]
     routing_signal: str
     run_id: str
+    session_id: str        # set at run start; updated per-session for multi-turn
+    turn_index: int        # current turn's position within the active session
     payload: Dict[str, Any]
     config: Dict[str, Any]
     start_time: str
@@ -58,17 +60,29 @@ class RoutingSignals:
     """
     Routing signal constants returned by strategy.route() and consumed by
     LangGraph conditional edges. END maps to LangGraph's built-in terminator.
+
+    PROCEED and CONTINUE_CONVERSATION are used by the intermediate
+    PostAttackRouter and PostDefenceRouter nodes added in Phase 2.
     """
-    CONTINUE = "continue"
+    CONTINUE = "continue"              # kept for backward compat
     ATTACK = "attack"
     END = "__end__"
+    PROCEED = "proceed"                # pass-through for intermediate routers
+    CONTINUE_CONVERSATION = "continue_conversation"  # loop within session
 
 
-def create_initial_state(run_id: str, payload: Dict[str, Any], config: Dict[str, Any]) -> SystemState:
+def create_initial_state(
+    run_id: str,
+    payload: Dict[str, Any],
+    config: Dict[str, Any],
+    session_id: str = "",
+) -> SystemState:
     """Create a fresh SystemState for a new execution run."""
     debug("Creating initial state", run_id=run_id, payload_keys=list(payload.keys()))
     return SystemState(
         run_id=run_id,
+        session_id=session_id,
+        turn_index=0,
         # Deep-copy prevents callers from mutating state through their original references
         payload=copy.deepcopy(payload),
         config=copy.deepcopy(config),

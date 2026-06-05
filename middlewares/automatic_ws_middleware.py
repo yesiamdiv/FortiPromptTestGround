@@ -279,6 +279,7 @@ class AutomaticWSMiddleware(BaseMiddleware):
         await self.ws_ops.broadcast_to_room(run_id, "evaluation_stats_updated", {
             "type": "evaluation_stats_updated",
             "run_id": run_id,
+                "session_id": state.get("session_id", f"sess_{run_id}"),
             "stats": {
                 "total_evaluations": iteration_count,
                 "success_rate": successful / total if total else 0.0,

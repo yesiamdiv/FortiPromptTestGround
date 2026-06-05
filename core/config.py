@@ -31,7 +31,7 @@ class StrategyConfig(BaseModel):
 
 # Main Graph Configuration Model
 class GraphConfig(BaseModel):
-    graph_type: Literal["manual", "automatic", "default", "batch"] = Field(..., description="Type of graph topology to build")
+    graph_type: Literal["manual", "automatic", "default", "batch", "multiturn"] = Field(..., description="Type of graph topology to build")
     
     # Configurations for each node type in the graph
     attack_node_config: AttackNodeConfig = Field(..., description="Configuration for the attack node")

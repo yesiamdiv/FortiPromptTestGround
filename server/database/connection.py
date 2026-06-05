@@ -77,6 +77,14 @@ class DatabaseConnection:
         await cls._db.evaluations.create_index([("run_id", 1), ("score", -1)])
         await cls._db.evaluations.create_index("category")
         
+        # Unified sessions/turns indexes (Phase 2)
+        await cls._db.sessions.create_index("session_id", unique=True)
+        await cls._db.sessions.create_index("run_id")
+        await cls._db.sessions.create_index([("run_id", 1), ("created_at", 1)])
+        await cls._db.turns.create_index("turn_id", unique=True)
+        await cls._db.turns.create_index("session_id")
+        await cls._db.turns.create_index([("session_id", 1), ("index", 1)])
+
         checkpoint("Database indexes created")
     
     @classmethod

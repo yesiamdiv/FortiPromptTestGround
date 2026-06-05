@@ -73,7 +73,7 @@ class BatchDatabaseMiddleware(BaseMiddleware):
         runtime_config: Dict[str, Any],
         run_id: str,
     ) -> None:
-        """Record started_at — identical to AutomaticDatabaseMiddleware."""
+        """Record started_at and create one Session for this batch run."""
         tracer("BatchDatabaseMiddleware.before_run", run_id=run_id)
         db = get_db()
         if db is None:
@@ -83,7 +83,19 @@ class BatchDatabaseMiddleware(BaseMiddleware):
             db_ops = get_db_ops(db)
             _now = datetime.utcnow().isoformat()
             await db_ops.update_run(run_id, {"started_at": _now, "updated_at": _now})
-            debug("Batch run started_at recorded", run_id=run_id)
+
+            # Create one Session per batch run
+            session_id = f"sess_{run_id}"
+            run_doc = await db_ops.get_run(run_id)
+            run_name = run_doc.name if run_doc else run_id
+            await db_ops.create_session(
+                session_id=session_id,
+                run_id=run_id,
+                name=run_name,
+                run_type="batch",
+            )
+            state["session_id"] = session_id
+            step("Batch session created", session_id=session_id)
         except Exception as e:
             err("BatchDatabaseMiddleware.before_run error", error=str(e))
 
@@ -122,18 +134,31 @@ class BatchDatabaseMiddleware(BaseMiddleware):
                 warn("BatchDatabaseMiddleware: no chunk_results to persist", node=node_name)
                 return
 
-            # ── "defence" node: save attacks + defences ──────────────────────
+            session_id = state.get("session_id", f"sess_{run_id}")
+
+            # ── "defence" node: create turns, save attacks + defences ────────
             if node_name == NodeName.DEFENCE:
                 step("BatchDatabaseMiddleware: persisting attacks+defences", items=len(chunk_results))
                 for record in chunk_results:
                     turn_id: str = record.get("turn_id", f"batch_{run_id}_{record.get('global_index', 0)}")
                     global_index: int = record.get("global_index", 0)
 
-                    if self.middleware_config.get("save_attacks"):
-                        await self._save_attack(db_ops, run_id, global_index, record, turn_id)
+                    # Create Turn document for this batch item
+                    await db_ops.create_turn(session_id, turn_id, run_id, index=global_index)
 
+                    attack_id = None
+                    if self.middleware_config.get("save_attacks"):
+                        attack_id = await self._save_attack(db_ops, run_id, global_index, record, turn_id)
+
+                    defence_id = None
                     if self.middleware_config.get("save_defences"):
-                        await self._save_defence(db_ops, run_id, global_index, record, turn_id)
+                        defence_id = await self._save_defence(db_ops, run_id, global_index, record, turn_id)
+
+                    await db_ops.update_turn_references(
+                        turn_id,
+                        attack_data_id=attack_id,
+                        defence_data_id=defence_id,
+                    )
 
                 step("BatchDatabaseMiddleware: attacks+defences persisted", items=len(chunk_results))
 
@@ -147,7 +172,9 @@ class BatchDatabaseMiddleware(BaseMiddleware):
                     global_index = record.get("global_index", 0)
 
                     if self.middleware_config.get("save_evaluations"):
-                        await self._save_evaluation(db_ops, run_id, global_index, record, turn_id)
+                        eval_id = await self._save_evaluation(db_ops, run_id, global_index, record, turn_id)
+                        if eval_id:
+                            await db_ops.update_turn_references(turn_id, evaluation_data_id=eval_id)
                         eval_obj = record.get("evaluation")
                         if eval_obj and hasattr(eval_obj, "success") and eval_obj.success:
                             successful_in_chunk += 1
@@ -231,7 +258,7 @@ class BatchDatabaseMiddleware(BaseMiddleware):
             attack = record.get("attack")
             if not attack:
                 return
-            await db_ops.save_attack(
+            return await db_ops.save_attack(
                 run_id=run_id,
                 index=index,
                 turn_id=turn_id,
@@ -247,7 +274,7 @@ class BatchDatabaseMiddleware(BaseMiddleware):
             defence = record.get("defence")
             if not defence:
                 return
-            await db_ops.save_defence(
+            return await db_ops.save_defence(
                 run_id=run_id,
                 index=index,
                 turn_id=turn_id,
@@ -265,7 +292,7 @@ class BatchDatabaseMiddleware(BaseMiddleware):
             evaluation = record.get("evaluation")
             if not evaluation:
                 return
-            await db_ops.save_evaluation(
+            return await db_ops.save_evaluation(
                 run_id=run_id,
                 index=index,
                 turn_id=turn_id,

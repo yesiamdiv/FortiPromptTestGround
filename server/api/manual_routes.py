@@ -50,13 +50,18 @@ async def create_manual_session(
             err("Run not configured for manual sessions", run_id=run_id)
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Run is not configured for manual sessions.")
         
-        session_id = await db_ops.create_manual_session(
+        # Create session in the unified sessions collection
+        import uuid as _uuid
+        session_id = f"sess_{_uuid.uuid4().hex[:12]}"
+        await db_ops.create_session(
+            session_id=session_id,
             run_id=run_id,
             name=request.name,
-            description=request.description or ""
+            run_type="manual",
+            description=request.description or "",
         )
         step("Manual session created", session_id=session_id)
-        
+
         # If initial_payload contains a prompt, fire it as the first turn
         if request.initial_payload and request.initial_payload.get("prompt"):
             run_manager = get_run_manager()
@@ -66,7 +71,7 @@ async def create_manual_session(
                 input_payload={**request.initial_payload, "session_id": session_id}
             )
             
-        session = await db_ops.get_manual_session(session_id)
+        session = await db_ops.get_session(session_id)
         if not session:
             err("Failed to retrieve created session", session_id=session_id)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve created session.")
@@ -92,7 +97,7 @@ async def submit_manual_turn(
     """
     tracer("Submitting manual turn", run_id=run_id, session_id=session_id)
     try:
-        session = await db_ops.get_manual_session(session_id)
+        session = await db_ops.get_session(session_id)
         if not session or session.run_id != run_id:
             warn("Manual session not found", session_id=session_id, run_id=run_id)
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Manual session {session_id} not found for run {run_id}.")
@@ -134,7 +139,7 @@ async def get_manual_session_details(
     """
     debug("Getting manual session details", run_id=run_id, session_id=session_id)
     try:
-        session = await db_ops.get_manual_session(session_id)
+        session = await db_ops.get_session(session_id)
         if not session or session.run_id != run_id:
             warn("Manual session not found", session_id=session_id, run_id=run_id)
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Manual session {session_id} not found for run {run_id}.")
@@ -157,12 +162,12 @@ async def get_manual_turn_history(
     """
     tracer("Getting manual turn history", run_id=run_id, session_id=session_id)
     try:
-        session = await db_ops.get_manual_session(session_id)
+        session = await db_ops.get_session(session_id)
         if not session or session.run_id != run_id:
             warn("Manual session not found", session_id=session_id, run_id=run_id)
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Manual session {session_id} not found for run {run_id}.")
         
-        turns = await db_ops.get_manual_turns_for_session(session_id)
+        turns = await db_ops.get_turns_for_session(session_id)
         debug(f"Found {len(turns)} turns", session_id=session_id)
         
         detailed_turns = []
@@ -208,7 +213,7 @@ async def list_manual_sessions(
         run = await db_ops.get_run(run_id)
         if not run:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run {run_id} not found.")
-        sessions = await db_ops.list_manual_sessions(run_id)
+        sessions = await db_ops.get_sessions_for_run(run_id)
         return {"sessions": [s.dict() for s in sessions]}
     except HTTPException as e:
         raise e
@@ -226,11 +231,11 @@ async def delete_manual_session(
     """Delete a manual session and its turns."""
     tracer("Deleting manual session", run_id=run_id, session_id=session_id)
     try:
-        session = await db_ops.get_manual_session(session_id)
+        session = await db_ops.get_session(session_id)
         if not session or session.run_id != run_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found.")
-        await db_ops.manual_sessions.delete_one({"session_id": session_id, "run_id": run_id})
-        await db_ops.manual_turns.delete_many({"session_id": session_id})
+        await db_ops.sessions.delete_one({"session_id": session_id, "run_id": run_id})
+        await db_ops.turns.delete_many({"session_id": session_id})
         step("Manual session deleted", session_id=session_id)
         return {"message": f"Session {session_id} deleted successfully"}
     except HTTPException as e:

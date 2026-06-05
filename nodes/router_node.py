@@ -66,3 +66,95 @@ class RouterNode(BaseAdversarialNode):
             "properties": {},
             "description": "Router node delegates entirely to strategy.route(). No node-specific params."
         }
+
+class PostAttackRouter(BaseAdversarialNode):
+    """
+    Intermediate router placed after the attack node.
+
+    Delegates to strategy.route_post_attack(). Expected return: PROCEED (→ defence).
+    Fail-safe: any unexpected signal is coerced to PROCEED so the graph
+    cannot stall between attack and defence.
+    """
+
+    def __init__(self, config: Dict[str, Any] = None):
+        super().__init__(config)
+
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
+        if runtime_config is None:
+            runtime_config = {}
+        tracer("PostAttackRouter.execute")
+
+        if "strategy" not in self.config:
+            err("Strategy instance not found in PostAttackRouter config")
+            return {"routing_signal": RoutingSignals.PROCEED}
+
+        strategy = self.config["strategy"]
+        try:
+            signal = strategy.route_post_attack(state, runtime_config)
+        except Exception as e:
+            err("PostAttackRouter: strategy raised", error=str(e))
+            signal = RoutingSignals.PROCEED
+
+        if signal not in (RoutingSignals.PROCEED,):
+            warn("PostAttackRouter: unexpected signal, defaulting to PROCEED", signal=signal)
+            signal = RoutingSignals.PROCEED
+
+        step("PostAttackRouter decision", signal=signal)
+        return {"routing_signal": signal}
+
+    @classmethod
+    def get_node_schema(cls) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {},
+            "description": "Delegates to strategy.route_post_attack(). No node-specific params.",
+        }
+
+
+class PostDefenceRouter(BaseAdversarialNode):
+    """
+    Intermediate router placed after the defence node.
+
+    Delegates to strategy.route_post_defence(). Valid signals:
+      PROCEED              → eval  (default for all existing strategies)
+      CONTINUE_CONVERSATION → attack (same session, used by MultiTurnStrategy)
+    Fail-safe: any unexpected signal is coerced to PROCEED.
+    """
+
+    def __init__(self, config: Dict[str, Any] = None):
+        super().__init__(config)
+
+    async def execute(self, state: SystemState, runtime_config: Dict[str, Any] = None) -> Dict[str, Any]:
+        if runtime_config is None:
+            runtime_config = {}
+        tracer("PostDefenceRouter.execute")
+
+        if "strategy" not in self.config:
+            err("Strategy instance not found in PostDefenceRouter config")
+            return {"routing_signal": RoutingSignals.PROCEED}
+
+        strategy = self.config["strategy"]
+        try:
+            signal = strategy.route_post_defence(state, runtime_config)
+        except Exception as e:
+            err("PostDefenceRouter: strategy raised", error=str(e))
+            signal = RoutingSignals.PROCEED
+
+        valid = (RoutingSignals.PROCEED, RoutingSignals.CONTINUE_CONVERSATION)
+        if signal not in valid:
+            warn("PostDefenceRouter: unexpected signal, defaulting to PROCEED", signal=signal)
+            signal = RoutingSignals.PROCEED
+
+        step("PostDefenceRouter decision", signal=signal)
+        return {"routing_signal": signal}
+
+    @classmethod
+    def get_node_schema(cls) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {},
+            "description": (
+                "Delegates to strategy.route_post_defence(). "
+                "PROCEED → eval, CONTINUE_CONVERSATION → attack."
+            ),
+        }

@@ -6,7 +6,7 @@ from typing import Dict, Any, Callable, Type
 
 # Import base classes and specific node/strategy implementations
 from nodes.base import BaseAdversarialNode
-from nodes.default_nodes import DefaultAttackNode, DefaultDefenceNode, DefaultEvalNode
+from nodes.default_nodes import DefaultAttackNode, DefaultDefenceNode, DefaultEvalNode, SkipEvalNode
 from nodes.multilayer_defense_node import MultilayerDefenseNode
 from nodes.strategy_attack_node import StrategyDrivenAttackNode
 from nodes.ensemble_defence_node import EnsembleDefenceNode
@@ -20,6 +20,7 @@ from strategies.iterative_improvement_strategy import IterativeImprovementStrate
 from strategies.manual_strategy import ManualStrategy # Import ManualStrategy
 from strategies.redgen_strategy import RedGenStrategy
 from strategies.batch_strategy import BatchStrategy
+from strategies.multiturn_strategy import MultiTurnStrategy
 
 # Import provider registry and registration function
 from engine.provider_registry import get_provider_registry, register_all_providers
@@ -116,7 +117,8 @@ def register_all_components():
     _node_registry.register("server_eval", ServerEvalNode)
     _node_registry.register("llm_eval", LLMEvalNode)
     _node_registry.register("multilayer_defense", MultilayerDefenseNode)
-    step("Registered custom nodes", nodes=["router", "strategy_attack", "ensemble_defense", "server_eval", "llm_eval", "multilayer_defense"])
+    _node_registry.register("skip_eval", SkipEvalNode)
+    step("Registered custom nodes", nodes=["router", "strategy_attack", "ensemble_defense", "server_eval", "llm_eval", "multilayer_defense", "skip_eval"])
 
     # 3. Strategies were already doing it perfectly!
     _strategy_registry.register("default", DefaultStrategy)
@@ -124,6 +126,7 @@ def register_all_components():
     _strategy_registry.register("redgen_attack", RedGenStrategy)
     _strategy_registry.register("manual", ManualStrategy)
     _strategy_registry.register("batch", BatchStrategy)
+    _strategy_registry.register("multiturn", MultiTurnStrategy)
     step("Registered strategies", strategies=["default", "iterative_improvement", "manual", "batch"])
     
     register_all_providers()
