@@ -271,21 +271,34 @@ class AutomaticWSMiddleware(BaseMiddleware):
             iteration
         )
 
-        # Emit per-turn stats using context (no extra DB hit needed)
+        # Emit per-turn stats — keys must match the frontend EvalStats interface:
+        # { total, breaches, defended, partial, averageScore, breachRate }
         context = state.get("strategy_context", {})
-        iteration_count = context.get("iteration_count", iteration)
-        successful = context.get("successful_iterations", 0)
-        total = max(iteration_count, 1)
+        iteration_count = context.get("iteration_count", iteration + 1)
+        successful      = context.get("successful_iterations", 0)
+        defended        = iteration_count - successful
+        # Accumulate scores list in strategy_context so we can compute a true average.
+        # Strategies that don't track this will leave scores as []; we fall back to latest.
+        scores     = context.get("scores", [])
+        avg_score  = (sum(scores) / len(scores)) if scores else (evaluation.score if evaluation else 0.0)
+        breach_rate = (successful / iteration_count) if iteration_count else 0.0
+
+        # Map category to partial verdict — any category containing "partial" counts as partial
+        cat      = evaluation.category if evaluation else ""
+        is_partial = "partial" in cat.lower()
+        partial_count = context.get("partial_iterations", 0)
+
         await self.ws_ops.broadcast_to_room(run_id, "evaluation_stats_updated", {
             "type": "evaluation_stats_updated",
             "run_id": run_id,
-                "session_id": state.get("session_id", f"sess_{run_id}"),
+            "session_id": state.get("session_id", f"sess_{run_id}"),
             "stats": {
-                "total_evaluations": iteration_count,
-                "success_rate": successful / total if total else 0.0,
-                "latest_score": evaluation.score,
-                "latest_success": evaluation.success,
-                "latest_category": evaluation.category,
+                "total":        iteration_count,
+                "breaches":     successful,
+                "defended":     defended,
+                "partial":      partial_count,
+                "averageScore": avg_score,
+                "breachRate":   breach_rate,
             }
         })
 

@@ -179,15 +179,6 @@ class BatchDatabaseMiddleware(BaseMiddleware):
                         if eval_obj and hasattr(eval_obj, "success") and eval_obj.success:
                             successful_in_chunk += 1
 
-                # Increment run-level counters (same $inc pattern as AutomaticDatabaseMiddleware)
-                inc_update = {
-                    "$inc": {
-                        "total_iterations": len(chunk_results),
-                        "successful_iterations": successful_in_chunk,
-                    }
-                }
-                await db_ops.runs.update_one({"run_id": run_id}, inc_update)
-
                 step(
                     "BatchDatabaseMiddleware: evaluations persisted",
                     items=len(chunk_results),
@@ -211,7 +202,8 @@ class BatchDatabaseMiddleware(BaseMiddleware):
             db_ops = get_db_ops(db)
             context = state.get("strategy_context", {})
             total_processed = context.get("total_processed", 0)
-            successful = context.get("successful_iterations", 0)
+            # successful_iterations is no longer cached on RunModel; derive from context.
+            successful = context.get("total_successful", context.get("successful_count", 0))
             final_score = (successful / total_processed) if total_processed > 0 else 0.0
 
             await db_ops.update_run(run_id, {

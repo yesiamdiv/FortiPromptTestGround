@@ -348,8 +348,6 @@ class WebSocketOperations:
         debug("Sending personal message", session_id=session_id, event=event)
         await self.sio_manager.send_to_session(session_id, event, data)
 
-
-# Convenience function
     async def broadcast_to_room(self, room: str, event: str, data: Dict[str, Any]) -> None:
         """
         Direct passthrough to sio_manager.broadcast_to_room.

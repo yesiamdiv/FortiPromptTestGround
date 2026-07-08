@@ -199,6 +199,21 @@ async def health_check():
     return {"status": "ok", "service": "fortiprompt"}
 
 
+# # ============================================================================
+# # Mount Socket.IO
+# # ============================================================================
+# # socketio.ASGIApp must wrap FastAPI (not the other way round).
+# # It intercepts every /socket.io/* request itself and forwards everything
+# # else to FastAPI.  CORS for socket.io is handled inside SocketIOManager
+# # (cors_allowed_origins is set on AsyncServer) because these requests never
+# # reach FastAPI's CORSMiddleware.
+
+# socketio_manager = get_socketio_manager()
+
+# # combined_app is the uvicorn entry point (see __main__ and Procfile).
+# combined_app = socketio_manager.get_asgi_app(other_asgi_app=app)
+
+
 # ============================================================================
 # Mount Socket.IO
 # ============================================================================
@@ -208,6 +223,8 @@ socket_app = socketio_manager.get_asgi_app()
 
 # Mount Socket.IO at /socket.io path
 app.mount("/socket.io", socket_app)
+
+
 
 
 # ============================================================================
@@ -226,6 +243,17 @@ if __name__ == "__main__":
     print(f"📚 API docs available at http://{host}:{port}/docs")
     print(f"🔌 Socket.IO available at http://{host}:{port}/socket.io\n")
     
+    # Use combined_app (socketio wrapper) as the uvicorn target.
+    # When reload=True we pass the import string; reload=False can use the object directly.
+    # uvicorn.run(
+    #     "server.main:combined_app",
+    #     host=host,
+    #     port=port,
+    #     reload=reload,
+    #     log_level="info"
+    # )
+
+
     uvicorn.run(
         "server.main:app",
         host=host,

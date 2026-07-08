@@ -112,14 +112,6 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
                 eval_id = await self._save_evaluation(db_ops, run_id, iteration, state, turn_id)
                 if eval_id:
                     await db_ops.update_turn_references(turn_id, evaluation_data_id=eval_id)
-                # Increment run-level counters
-                current_turn = state.get("current_turn", {})
-                eval_obj = current_turn.get("evaluation")
-                success = eval_obj.success if eval_obj and hasattr(eval_obj, "success") else False
-                inc_update = {"$inc": {"total_iterations": 1}}
-                if success:
-                    inc_update["$inc"]["successful_iterations"] = 1
-                await db_ops.runs.update_one({"run_id": run_id}, inc_update)
                 # Advance turn_index for next cycle
                 state["turn_index"] = turn_index + 1
             

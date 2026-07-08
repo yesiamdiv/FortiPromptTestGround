@@ -117,11 +117,12 @@ class RunModel(BaseModel):
     updated_at: Optional[str] = Field(None, description="ISO timestamp when the run was last updated")
     components: List[str] = Field(default_factory=list, description="Derived list of component types from graph_config")
 
-    # Aggregated statistics (computed from related data)
-    total_iterations: int = Field(default=0, description="Total number of attack iterations performed")
-    successful_iterations: int = Field(default=0, description="Count of iterations that were successful based on evaluation")
-    final_score: Optional[float] = Field(None, description="The score of the final iteration, if applicable")
-    best_score: Optional[float] = Field(None, description="The best score achieved across all iterations")
+    # Scores written once at run completion — kept because they require knowing iteration
+    # order (final) or a MAX aggregation (best) and are cheap to store.
+    # total_iterations and successful_iterations are intentionally NOT stored here;
+    # they are computed at query time from the evaluations collection via /stats.
+    final_score: Optional[float] = Field(None, description="Score of the final iteration")
+    best_score: Optional[float] = Field(None, description="Best score achieved across all iterations")
     
     # Removed optional metadata fields: intent, target, user_id, session_id, tags
     
@@ -148,8 +149,6 @@ class RunModel(BaseModel):
                 "created_at": "2024-01-01T12:00:00",
                 "started_at": "2024-01-01T12:00:01",
                 "completed_at": "2024-01-01T12:05:00",
-                "total_iterations": 5,
-                "successful_iterations": 2,
                 "final_score": 0.85,
                 "best_score": 0.85
             }
@@ -252,7 +251,6 @@ class RunSummary(BaseModel):
     status: str
     strategy: str
     created_at: str
-    total_iterations: int
     best_score: Optional[float]
 
 
