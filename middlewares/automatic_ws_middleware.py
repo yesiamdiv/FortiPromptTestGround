@@ -89,7 +89,7 @@ class AutomaticWSMiddleware(BaseMiddleware):
             context = state.get("strategy_context", {})
             iteration = context.get("iteration_count", 0)
             # 5-B4: turn_id lives in current_turn, not strategy_context
-            turn_id = state.get("current_turn", {}).get("turn_id") or context.get("turn_id", f"turn_{iteration}")
+            turn_id = state.get("current_turn", {}).get("turn_id") or context.get("turn_id", f"turn_{run_id}_{iteration}")
 
             # Route based on node name
             if node_name == NodeName.ATTACK and self.middleware_config.get("broadcast_attacks"):

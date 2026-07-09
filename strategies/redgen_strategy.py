@@ -367,7 +367,7 @@ class RedGenStrategy(AttackStrategy):
         context["history"].append(final_prompt)
 
         turn_data = create_turn_data(
-            turn_id=f"redgen_turn_{iteration}",
+            turn_id=f"redgen_turn_{state['run_id']}_{iteration}",
             node_name="attack"
         )
         turn_data["attack"] = attack_payload

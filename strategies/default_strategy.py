@@ -87,7 +87,7 @@ class DefaultStrategy(AttackStrategy):
         # DEEP COPY before modifying history
         context = copy.deepcopy(state["strategy_context"])
         current_attempt = context["attempt_count"] + 1 if "attempt_count" in context else 1
-        turn_id = f"turn_{current_attempt}"
+        turn_id = f"turn_{state['run_id']}_{current_attempt}"
         
         # 1. Random Behavior (Combined templates pool)
         attack_templates = [

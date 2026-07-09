@@ -92,7 +92,7 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
             db_ops = get_db_ops(db)
             context = state.get("strategy_context", {})
             iteration = context.get("iteration_count", 0)
-            turn_id = state.get("current_turn", {}).get("turn_id") or f"turn_{iteration}"
+            turn_id = state.get("current_turn", {}).get("turn_id") or f"turn_{run_id}_{iteration}"
             session_id = state.get("session_id", f"sess_{run_id}")
             turn_index = state.get("turn_index", iteration)
 

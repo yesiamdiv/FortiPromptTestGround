@@ -90,7 +90,7 @@ class ManualWSMiddleware(BaseMiddleware):
             context = state.get("strategy_context", {})
             iteration = context.get("iteration_count", 0)
             current_turn = state.get("current_turn", {})
-            turn_id = current_turn.get("turn_id", f"turn_{iteration}")
+            turn_id = current_turn.get("turn_id", f"turn_{run_id}_{iteration}")
             session_id = context.get("session_id")
             
             if not session_id:

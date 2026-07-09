@@ -123,7 +123,7 @@ class IterativeImprovementStrategy(AttackStrategy):
         
         # STRICT DICTIONARY ACCESS
         iteration = context["iteration_count"] if "iteration_count" in context else 0
-        turn_id = f"turn_{iteration + 1}"
+        turn_id = f"turn_{state['run_id']}_{iteration + 1}"
         
         # --- 1. EVALUATION TRACKING ---
         current_turn = state["current_turn"]
