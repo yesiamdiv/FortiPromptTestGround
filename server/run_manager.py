@@ -285,10 +285,12 @@ class RunManager:
                 current_status_str = run_data.status
                 raw_graph_config = run_data.graph_config
                 description = getattr(run_data, "description", "")
+                name = getattr(run_data, "name", "")
             elif isinstance(run_data, dict):
                 current_status_str = run_data.get("status", RunStatus.IDLE.value)
                 raw_graph_config = run_data.get("graph_config")
                 description = run_data.get("description", "")
+                name = run_data.get("name", "")
             else:
                 raise TypeError(f"Unexpected type for run_data: {type(run_data)}")
 
@@ -316,6 +318,8 @@ class RunManager:
             payload = input_payload.copy() if input_payload else {}
             if "description" not in payload:
                 payload["description"] = description
+            if "name" not in payload:
+                payload["name"] = name
 
             executor.task = asyncio.create_task(executor.start(payload))
 

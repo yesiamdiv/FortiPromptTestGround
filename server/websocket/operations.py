@@ -102,12 +102,12 @@ class WebSocketOperations:
         """
         Broadcast evaluation completion event for automatic runs.
         """
-        debug("Broadcasting evaluation_result", run_id=run_id, index=index)
+        debug("Broadcasting evaluation_complete", run_id=run_id, index=index)
         await self.sio_manager.broadcast_to_room(
             run_id,
-            'evaluation_result',
+            'evaluation_complete',
             {
-                'type': 'evaluation_result',
+                'type': 'evaluation_complete',
                 'run_id': run_id,
                 'turn_id': turn_id,
                 'index': index,

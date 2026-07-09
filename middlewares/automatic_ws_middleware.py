@@ -84,6 +84,7 @@ class AutomaticWSMiddleware(BaseMiddleware):
             return
         
         try:
+            print("\n\n\n WE ARE IN AFTER STEP \n\n\n")
             # Extract iteration context
             context = state.get("strategy_context", {})
             iteration = context.get("iteration_count", 0)
@@ -141,7 +142,9 @@ class AutomaticWSMiddleware(BaseMiddleware):
             # Notify all connected clients that a new completed run is available
             # (used to refresh the runs list in the frontend sidebar)
             context = state.get("strategy_context", {})
+            payload = state.get("payload", {})
             await self.ws_ops.broadcast_new_run_available(run_id, {
+                "name": payload.get("name", ""),
                 "strategy": context.get("strategy_name", "unknown"),
                 "status": "completed",
             })

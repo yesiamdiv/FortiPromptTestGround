@@ -13,7 +13,7 @@ from server.api.data import router as data_router
 from server.api.manual_routes import router as manual_router
 
 # Database and WebSocket imports
-from server.database.connection import init_db, close_db, get_db
+from server.database.connection import init_db, close_db
 from server.websocket.socketio_manager import get_socketio_manager
 from server.run_manager import get_run_manager
 
@@ -143,9 +143,7 @@ app = FastAPI(
 # Middleware Configuration
 # ============================================================================
 
-# CORS
-# Read allowed origins from env var, falling back to localhost for development
-import os as _os
+# Read allowed origins from settings
 _allowed_origins = get_settings().cors_origins
 
 app.add_middleware(
@@ -199,29 +197,16 @@ async def health_check():
     return {"status": "ok", "service": "fortiprompt"}
 
 
-# # ============================================================================
-# # Mount Socket.IO
-# # ============================================================================
-# # socketio.ASGIApp must wrap FastAPI (not the other way round).
-# # It intercepts every /socket.io/* request itself and forwards everything
-# # else to FastAPI.  CORS for socket.io is handled inside SocketIOManager
-# # (cors_allowed_origins is set on AsyncServer) because these requests never
-# # reach FastAPI's CORSMiddleware.
-
-# socketio_manager = get_socketio_manager()
-
-# # combined_app is the uvicorn entry point (see __main__ and Procfile).
-# combined_app = socketio_manager.get_asgi_app(other_asgi_app=app)
-
-
 # ============================================================================
 # Mount Socket.IO
 # ============================================================================
+# FastAPI's CORSMiddleware handles CORS for all paths (API + /socket.io/*).
+# Socket.IO is mounted at /socket.io so it only sees its own requests.
+# CORS inside the SocketIOManager is set to [] — it relies entirely on
+# FastAPI's CORSMiddleware for CORS headers.
 
 socketio_manager = get_socketio_manager()
 socket_app = socketio_manager.get_asgi_app()
-
-# Mount Socket.IO at /socket.io path
 app.mount("/socket.io", socket_app)
 
 
@@ -239,20 +224,9 @@ if __name__ == "__main__":
     port = _s.port
     reload = os.getenv("SERVER_RELOAD", "true").lower() == "true"
     
-    print(f"\n🌐 Starting server on http://{host}:{port}")
-    print(f"📚 API docs available at http://{host}:{port}/docs")
-    print(f"🔌 Socket.IO available at http://{host}:{port}/socket.io\n")
-    
-    # Use combined_app (socketio wrapper) as the uvicorn target.
-    # When reload=True we pass the import string; reload=False can use the object directly.
-    # uvicorn.run(
-    #     "server.main:combined_app",
-    #     host=host,
-    #     port=port,
-    #     reload=reload,
-    #     log_level="info"
-    # )
-
+    print(f"\nStarting server on http://{host}:{port}")
+    print(f"API docs available at http://{host}:{port}/docs")
+    print(f"Socket.IO available at http://{host}:{port}/socket.io\n")
 
     uvicorn.run(
         "server.main:app",

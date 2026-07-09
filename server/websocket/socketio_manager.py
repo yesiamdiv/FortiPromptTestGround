@@ -25,19 +25,14 @@ class SocketIOManager:
         """Initialize Socket.IO server"""
         tracer("Initializing SocketIOManager")
 
-        # cors_allowed_origins must be set here — socket.io's ASGIApp intercepts
-        # /socket.io/* before FastAPI's CORSMiddleware ever runs, so it has to do
-        # its own CORS. An empty list means "deny all", causing 404 on the handshake.
-        from core.env import get_settings
-        _origins = get_settings().cors_origins  # same list used by FastAPI
-
-        # Create Socket.IO server with ASGI mode
+        # CORS is handled entirely by FastAPI's CORSMiddleware.
+        # cors_allowed_origins is empty here to avoid duplicate headers
+        # that browsers reject.
         self.sio = socketio.AsyncServer(
             async_mode='asgi',
-            cors_allowed_origins=_origins,
+            cors_allowed_origins=[],
             logger=False,
             engineio_logger=False,
-            max_http_buffer_size=10000000,
         )
         
         # Track connections per run
@@ -284,26 +279,13 @@ class SocketIOManager:
         debug("Getting active runs")
         return list(self.run_rooms.keys())
     
-    # def get_asgi_app(self, other_asgi_app=None):
-    #     """
-    #     Return a socketio.ASGIApp that wraps self.sio. 
-    #     Pass other_asgi_app=<FastAPI app> so non-socket requests fall through.
-    #     """
-    #     debug("Getting ASGI app")
-    #     return socketio.ASGIApp(
-    #         socketio_server=self.sio,
-    #         other_asgi_app=other_asgi_app,
-    #         socketio_path="socket.io",
-    #     )
     def get_asgi_app(self):
         """
         Get ASGI app for Socket.IO.
-        
-        Returns:
-            Socket.IO ASGI app
+        Returns the standalone socketio.ASGIApp.
+        The FastAPI app mounts it at /socket.io in main.py.
         """
-        debug("Getting ASGI app")
-        return socketio.ASGIApp(self.sio)
+        return socketio.ASGIApp(self.sio, socketio_path="socket.io")
 
 
 # Global Socket.IO manager instance
