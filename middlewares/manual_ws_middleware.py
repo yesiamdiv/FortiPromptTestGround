@@ -103,7 +103,7 @@ class ManualWSMiddleware(BaseMiddleware):
                     attack_data = {
                         'preview': attack.to_string()[:200] if hasattr(attack, 'to_string') else str(attack)[:200],
                         'full_text': attack.to_string() if hasattr(attack, 'to_string') else str(attack),
-                        'type': attack._infer_type() if hasattr(attack, '_infer_type') else 'text',
+                        'type': attack.type,
                         'metadata': attack.metadata if hasattr(attack, 'metadata') else {},
                         'timestamp': current_turn.get("timestamp")
                     }

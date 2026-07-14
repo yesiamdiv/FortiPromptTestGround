@@ -16,6 +16,15 @@ class AttackPayload:
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.utcnow)
     
+    @property
+    def type(self) -> str:
+        """Infer the content type from the underlying data structure."""
+        if isinstance(self.data, str):
+            return 'text'
+        elif isinstance(self.data, list):
+            return 'chat'
+        return 'json'
+    
     def to_string(self) -> str:
         if isinstance(self.data, str):
             return self.data

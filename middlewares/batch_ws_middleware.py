@@ -157,7 +157,7 @@ class BatchWSMiddleware(BaseMiddleware):
                                 {
                                     "preview": attack_text[:200],
                                     "full_text": attack_text,
-                                    "type": attack._infer_type() if hasattr(attack, "_infer_type") else "text",
+                                    "type": attack.type,
                                     "metadata": attack.metadata,
                                     "timestamp": datetime.utcnow().isoformat(),
                                 },

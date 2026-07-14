@@ -464,6 +464,13 @@ class DatabaseOperations:
         step(f"Found {len(docs)} sessions", run_id=run_id)
         return [Session(**{k: v for k, v in d.items() if k != "_id"}) for d in docs]
 
+    async def delete_session(self, session_id: str, run_id: str) -> None:
+        """Delete a session and all its turns."""
+        debug("Deleting session", session_id=session_id, run_id=run_id)
+        await self.sessions.delete_one({"session_id": session_id, "run_id": run_id})
+        await self.turns.delete_many({"session_id": session_id})
+        step("Session deleted", session_id=session_id)
+
     # ========================================================================
     # Unified Turn Operations
     # ========================================================================

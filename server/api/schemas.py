@@ -36,32 +36,29 @@ class RunDetailsResponse(RunModel):
 class ListRunsResponse(BaseModel):
     runs: List[RunModel]
 
-# --- Manual Session & Turn Schemas ---
+# --- Session & Turn Schemas ---
 
-class CreateManualSessionRequest(BaseModel):
+class CreateSessionRequest(BaseModel):
     # run_id comes from the URL path parameter, NOT the request body
-    name: str = Field(default="Session", description="A human-readable name for the manual session.")
+    name: str = Field(default="Session", description="A human-readable name for the session.")
     description: Optional[str] = Field(None, description="Optional description for the session.")
     initial_payload: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Initial payload for the first turn (e.g., user's first prompt). Can contain runtime_config.")
 
-class ManualSessionResponse(Session):
-    pass
-
-class SubmitManualTurnRequest(BaseModel):
-    prompt: str = Field(..., description="The user's input/prompt for this manual turn.")
+class SubmitTurnRequest(BaseModel):
+    prompt: str = Field(..., description="The user's input/prompt for this turn.")
     runtime_config: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Runtime overrides for this specific turn.")
 
-class ManualTurnResponse(Turn):
+class TurnDetailResponse(Turn):
     """Extends Turn to include actual attack/defence/eval data for API response"""
     attack_data: Optional[AttackData] = Field(None)
     defence_data: Optional[DefenceData] = Field(None)
     evaluation_data: Optional[EvaluationData] = Field(None)
 
-class ManualTurnHistoryResponse(BaseModel):
+class SessionHistoryResponse(BaseModel):
     session: Session
-    turns: List[ManualTurnResponse] # Returns detailed turns
+    turns: List[TurnDetailResponse]
 
-class SubmitManualTurnResponse(BaseModel):
+class SubmitTurnResponse(BaseModel):
     run_id: str
     session_id: str
     turn_id: str

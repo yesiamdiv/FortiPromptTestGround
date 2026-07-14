@@ -193,7 +193,7 @@ class AutomaticWSMiddleware(BaseMiddleware):
         attack_data = {
             'preview': attack_text[:200],
             'full_text': attack_text,
-            'type': attack._infer_type() if hasattr(attack, '_infer_type') else 'text',
+            'type': attack.type,
             'metadata': attack.metadata,  # Direct property access
             'timestamp': current_turn.get("timestamp")
         }
