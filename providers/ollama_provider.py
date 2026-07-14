@@ -5,6 +5,10 @@ Integrates with local Ollama instance for LLM inference.
 """
 
 from typing import Dict, Any
+import asyncio
+import shutil
+import subprocess
+import sys
 from providers.base import BaseLLMProvider
 from core.logging import debug, tracer, step, warn, err
 from core.env import get_settings
@@ -31,7 +35,38 @@ class OllamaProvider(BaseLLMProvider):
         self.base_url = self.config.get("base_url")
         self._client = None
         debug("Ollama provider initialized", base_url=self.base_url, model=self.model)
-    
+
+    async def ensure_running(self) -> bool:
+        """Check if Ollama is reachable; if not, try to start it."""
+        if await self.validate_connection():
+            return True
+        warn("Ollama is not running – attempting to start it...")
+        try:
+            ollama_path = shutil.which("ollama")
+            if not ollama_path:
+                err("ollama binary not found on PATH")
+                return False
+            proc = await asyncio.create_subprocess_exec(
+                ollama_path, "serve",
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            for attempt in range(15):
+                await asyncio.sleep(1)
+                if await self.validate_connection():
+                    step("Ollama started successfully")
+                    return True
+                debug(f"Waiting for Ollama... ({attempt + 1}/15)")
+            warn("Ollama did not become ready within 15 seconds "
+                 "(it may still be starting in the background)")
+            return False
+        except FileNotFoundError:
+            err("ollama binary not found")
+            return False
+        except Exception as e:
+            err("Failed to start Ollama", error=str(e))
+            return False
+
     def _get_client(self):
         """Lazy initialization of LangChain Ollama client"""
         if self._client is None:

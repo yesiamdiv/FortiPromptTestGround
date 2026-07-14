@@ -92,11 +92,23 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"[WARN] Zombie run cleanup failed: {e}")
 
-    # 3. Socket.IO
+    # 3. Ollama health check — auto-start if not running
+    try:
+        from providers.ollama_provider import OllamaProvider
+        ollama = OllamaProvider({"model": "health-check"})
+        ollama_ok = await ollama.ensure_running()
+        if ollama_ok:
+            print("[OK] Ollama is reachable")
+        else:
+            print("[WARN] Ollama is not available – LLM nodes will fail until it is started")
+    except Exception as e:
+        print(f"[WARN] Ollama health check failed: {e}")
+
+    # 4. Socket.IO
     get_socketio_manager()
     print("[OK] Socket.IO manager ready")
 
-    # 4. Run manager
+    # 5. Run manager
     get_run_manager()
     print("[OK] Run manager ready")
 
