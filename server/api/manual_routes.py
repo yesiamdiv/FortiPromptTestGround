@@ -15,7 +15,7 @@ from server.run_manager import get_run_manager, RunManager, RunStatus
 from server.database.connection import get_db
 from server.database.operations import get_db_ops
 from core.logging import checkpoint, debug, err, tracer, step, warn
-from server.database.models import ManualTurn, ManualSession, AttackData, DefenceData, EvaluationData # Import Pydantic models
+from server.database.models import AttackData, DefenceData, EvaluationData # Import Pydantic models
 from engine.state import SystemState, RoutingSignals # For type hinting state_checkpoint
 from server.websocket.socketio_manager import get_socketio_manager # Import for broadcasting
 
@@ -173,7 +173,6 @@ async def get_manual_turn_history(
         detailed_turns = []
         for turn in turns:
             attack_data = None
-            # Use the correct fields from ManualTurn model for data retrieval
             if turn.attack_data_id:
                 attack_data = await db_ops.get_attack_by_id(turn.attack_data_id)
             

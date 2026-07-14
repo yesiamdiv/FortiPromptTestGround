@@ -13,8 +13,6 @@ from server.database.models import (
     AttackData,
     DefenceData,
     EvaluationData,
-    ManualTurn,
-    ManualSession,
     Session,
     Turn,
 )
@@ -27,9 +25,6 @@ from engine.state import SystemState
 class DatabaseOperations:
     """
     Database operations for adversarial testing data.
-    
-    Manages separate collections for runs, attacks, defences, evaluations,
-    and specific collections for manual sessions and turns.
     """
     
     def __init__(self, db: AsyncIOMotorDatabase):
@@ -45,10 +40,8 @@ class DatabaseOperations:
         self.attacks = db.attacks
         self.defences = db.defences
         self.evaluations = db.evaluations
-        self.manual_sessions = db.manual_sessions
-        self.manual_turns = db.manual_turns
-        self.sessions = db.sessions  # Unified sessions collection
-        self.turns = db.turns        # Unified turns collection
+        self.sessions = db.sessions
+        self.turns = db.turns
     
     # ========================================================================
     # Run Operations
@@ -377,235 +370,6 @@ class DatabaseOperations:
         step(f"Found {len(eval_docs)} evaluations", run_id=run_id)
         return [EvaluationData(**{k: v for k, v in doc.items() if k != "_id"}) for doc in eval_docs]
 
-    # ========================================================================
-    # Manual Session Operations
-    # ========================================================================
-
-    async def create_manual_session(
-        self,
-        run_id: str,
-        name: str,
-        description: str = "",
-        initial_state_checkpoint: Optional[Dict[str, Any]] = None
-    ) -> str:
-        """
-        Create a new manual interaction session.
-
-        Args:
-            run_id: The ID of the parent run.
-            name: A human-readable name for the session.
-            description: Optional description for the session.
-            initial_state_checkpoint: The initial LangGraph SystemState to save (optional).
-
-        Returns:
-            The newly created session_id.
-        """
-        tracer("Creating manual session", run_id=run_id, name=name)
-        session_id = f"sess_{uuid.uuid4().hex[:12]}"
-        session_doc = {
-            "session_id": session_id,
-            "run_id": run_id,
-            "name": name,
-            "description": description,
-            "status": "active",
-            "created_at": datetime.utcnow().isoformat(),
-            "updated_at": datetime.utcnow().isoformat(),
-            "turn_ids": [],
-            "total_turns": 0,
-            "state_checkpoint": initial_state_checkpoint  # Save initial state
-        }
-        await self.manual_sessions.insert_one(session_doc)
-        step("Manual session created", session_id=session_id, run_id=run_id)
-        return session_id
-    
-    async def get_manual_session(self, session_id: str) -> Optional[ManualSession]:
-        """
-        Get a manual session by its ID.
-        """
-        debug("Getting manual session", session_id=session_id)
-        session_doc = await self.manual_sessions.find_one({"session_id": session_id})
-        if session_doc:
-            session_doc.pop("_id", None)
-            return ManualSession(**session_doc)
-        return None
-
-    async def update_manual_session_state(
-        self,
-        session_id: str,
-        run_id: str, # Added run_id for consistency/lookup
-        final_score: Optional[float] = None,
-        best_score: Optional[float] = None
-    ) -> bool:
-        """
-        Update the state checkpoint and final scores for a manual session.
-        """
-        debug("Updating manual session state", session_id=session_id)
-        updates = {
-            "updated_at": datetime.utcnow().isoformat()
-        }
-        if final_score is not None:
-            updates["final_score"] = final_score
-        if best_score is not None:
-            updates["best_score"] = best_score
-        
-        result = await self.manual_sessions.update_one(
-            {"session_id": session_id, "run_id": run_id},
-            {"$set": updates}
-        )
-        step("Session state updated", session_id=session_id)
-        return result.modified_count > 0
-    
-    async def get_last_manual_turn_for_session(self, session_id: str) -> Optional[ManualTurn]:
-        """
-        Get the last manual turn for a given session, ordered by index.
-        """
-        debug("Getting last manual turn", session_id=session_id)
-        turn_doc = await self.manual_turns.find(
-            {"session_id": session_id}
-        ).sort("index", -1).limit(1).to_list(length=1)
-        
-        if turn_doc:
-            return ManualTurn(**{k: v for k, v in turn_doc[0].items() if k != "_id"})
-        return None
-
-    # ========================================================================
-    # Manual Turn Operations
-    # ========================================================================
-
-    async def create_manual_turn(
-        self,
-        session_id: str,
-        turn_id: str,
-        run_id: str,
-        index: int,
-        turn_data: Optional[Dict[str, Any]] = None
-    ) -> str:
-        """
-        Create a new manual turn document.
-        """
-        tracer("Creating manual turn", session_id=session_id, turn_id=turn_id, index=index)
-        manual_turn_doc = {
-            "session_id": session_id,
-            "run_id": run_id,
-            "turn_id": turn_id,
-            "index": index,
-            "created_at": datetime.utcnow().isoformat(),
-            "updated_at": datetime.utcnow().isoformat(),
-            # Fields for attack, defence, eval data IDs will be updated later
-            "attack_data_id": None,
-            "defence_data_id": None,
-            "evaluation_data_id": None,
-            "state_checkpoint": turn_data # Initially save the turn_data as a partial state
-        }
-        await self.manual_turns.insert_one(manual_turn_doc)
-        
-        # Add turn_id to the manual session's turn_ids list
-        await self.manual_sessions.update_one(
-            {"session_id": session_id},
-            {"$push": {"turn_ids": turn_id}, "$inc": {"total_turns": 1}, "$set": {"updated_at": datetime.utcnow().isoformat()}}
-        )
-        step("Manual turn created", turn_id=turn_id, index=index)
-        return turn_id
-    
-    async def get_manual_turn(self, turn_id: str) -> Optional[ManualTurn]:
-        """
-        Get a manual turn by its ID.
-        """
-        debug("Getting manual turn", turn_id=turn_id)
-        turn_doc = await self.manual_turns.find_one({"turn_id": turn_id})
-        if turn_doc:
-            turn_doc.pop("_id", None)
-            return ManualTurn(**turn_doc)
-        return None
-
-    async def get_manual_turns_for_session(self, session_id: str) -> List[ManualTurn]:
-        """
-        Get all manual turns for a given session, ordered by index.
-        """
-        tracer("Getting manual turns for session", session_id=session_id)
-        cursor = self.manual_turns.find({"session_id": session_id}).sort("index", 1)
-        turn_docs = await cursor.to_list(length=None)
-        step(f"Found {len(turn_docs)} turns", session_id=session_id)
-        return [ManualTurn(**{k: v for k, v in doc.items() if k != "_id"}) for doc in turn_docs]
-    
-    async def update_manual_turn_data(
-        self,
-        session_id: str,
-        turn_id: str,
-        turn_index: int, # Explicitly pass turn_index to update/verify
-        attack_prompt: Optional[str] = None,
-        attack_metadata: Optional[Dict[str, Any]] = None,
-        defence_response: Optional[str] = None,
-        defence_status_code: Optional[int] = None,
-        defence_was_blocked: Optional[bool] = None,
-        defence_metadata: Optional[Dict[str, Any]] = None,
-        evaluation_score: Optional[float] = None,
-        evaluation_success: Optional[bool] = None,
-        evaluation_category: Optional[str] = None,
-        evaluation_feedback: Optional[str] = None,
-        evaluation_metadata: Optional[Dict[str, Any]] = None,
-        # state_checkpoint: Optional[Dict[str, Any]] = None # Allow updating the turn's checkpoint
-    ) -> bool:
-        """
-        Update data within an existing manual turn document.
-        This method is designed to be called by middlewares or nodes as data becomes available.
-        It also updates the corresponding AttackData, DefenceData, EvaluationData documents.
-        """
-        tracer("Updating manual turn data", session_id=session_id, turn_id=turn_id)
-        updates = {"updated_at": datetime.utcnow().isoformat()}
-        
-        # Update attack data and link to turn
-        if attack_prompt is not None:
-            attack_id = await self.save_attack(
-                run_id=(await self.get_manual_session(session_id)).run_id, # Fetch run_id from session
-                index=turn_index,
-                turn_id=turn_id,
-                prompt=attack_prompt,
-                metadata=attack_metadata
-            )
-            updates["attack_data_id"] = attack_id
-            step("Attack data updated", turn_id=turn_id)
-
-        # Update defence data and link to turn
-        if defence_response is not None:
-            defence_id = await self.save_defence(
-                run_id=(await self.get_manual_session(session_id)).run_id,
-                index=turn_index,
-                turn_id=turn_id,
-                response=defence_response,
-                status_code=defence_status_code,
-                was_blocked=defence_was_blocked,
-                metadata=defence_metadata
-            )
-            updates["defence_data_id"] = defence_id
-            step("Defence data updated", turn_id=turn_id)
-
-        # Update evaluation data and link to turn
-        if evaluation_score is not None:
-            evaluation_id = await self.save_evaluation(
-                run_id=(await self.get_manual_session(session_id)).run_id,
-                index=turn_index,
-                turn_id=turn_id,
-                score=evaluation_score,
-                success=evaluation_success,
-                category=evaluation_category,
-                feedback=evaluation_feedback,
-                metadata=evaluation_metadata
-            )
-            updates["evaluation_data_id"] = evaluation_id
-            step("Evaluation data updated", turn_id=turn_id, score=evaluation_score)
-            
-        # if state_checkpoint is not None:
-        #     updates["state_checkpoint"] = state_checkpoint
-            
-        result = await self.manual_turns.update_one(
-            {"session_id": session_id, "turn_id": turn_id},
-            {"$set": updates}
-        )
-        checkpoint("Manual turn data update complete", turn_id=turn_id)
-        return result.modified_count > 0
-    
-
     async def get_attack_by_id(self, doc_id: str):
         """Get an attack by MongoDB document ID (string)."""
         from bson import ObjectId
@@ -641,14 +405,6 @@ class DatabaseOperations:
         except Exception:
             pass
         return None
-
-    async def list_manual_sessions(self, run_id: str):
-        """List all manual sessions for a given run, ordered by creation time."""
-        tracer("Listing manual sessions", run_id=run_id)
-        cursor = self.manual_sessions.find({"run_id": run_id}).sort("created_at", 1)
-        docs = await cursor.to_list(length=None)
-        step(f"Found {len(docs)} sessions", run_id=run_id)
-        return [ManualSession(**{k: v for k, v in d.items() if k != "_id"}) for d in docs]
 
     # ========================================================================
     # Unified Session Operations

@@ -180,10 +180,11 @@ class ManualDatabaseMiddleware(BaseMiddleware):
             current_turn = state.get("current_turn", {})
             
             await db_ops.update_run(run_id, {
+                "status": "idle",
                 "updated_at": datetime.utcnow().isoformat()
             })
             
-            step("Manual run turn completed, state saved, set to IDLE", run_id=run_id)
+            step("Manual run turn completed — status set to IDLE", run_id=run_id)
         
         except Exception as e:
             err("Error in after_run", error=str(e))

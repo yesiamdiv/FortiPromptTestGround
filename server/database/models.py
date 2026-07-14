@@ -151,81 +151,6 @@ class RunModel(BaseModel):
 
 
 # ============================================================================
-# Manual Interaction Models (Consolidated & Normalized)
-# ============================================================================
-
-class ManualTurn(BaseModel):
-    """Represents a single turn in a manual interaction session, referencing core data."""
-    
-    # Identifiers linking to core data and session
-    session_id: str = Field(..., description="Unique identifier for the manual session")
-    run_id: str = Field(..., description="Associated run ID (links to RunModel)")
-    index: int = Field(..., description="Turn number within the session (0-indexed)") # Renamed from turn_index
-    turn_id: str = Field(..., description="Unique identifier for this specific turn, linking to Attack/Defence/Evaluation data")
-
-    # Reference IDs for core data models
-    attack_data_id: Optional[str] = Field(None, description="Reference ID for AttackData")
-    defence_data_id: Optional[str] = Field(None, description="Reference ID for DefenceData")
-    evaluation_data_id: Optional[str] = Field(None, description="Reference ID for EvaluationData")
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "session_id": "sess_manual_xyz789",
-                "run_id": "run_abc123",
-                "index": 0,
-                "turn_id": "turn_1",
-                "attack_data_id": "attack_data_id_xyz", # Example reference ID
-                "defence_data_id": "defence_data_id_abc", # Example reference ID
-                "evaluation_data_id": "eval_data_id_def" # Example reference ID
-            }
-        }
-
-
-class ManualSession(BaseModel):
-    """Represents a manual interaction session, aggregating turn IDs and session metadata."""
-    
-    # Identifiers
-    session_id: str = Field(..., description="Unique session identifier")
-    run_id: str = Field(..., description="Associated run ID, linking this session to a specific run execution")
-    
-    # Session details
-    name: str = Field(..., description="User-defined name or title for the session")
-    description: Optional[str] = Field(default="", description="Optional description for the session")
-    
-    # Status and lifecycle
-    status: Literal["active", "saved", "archived"] = Field(
-        default="active",
-        description="Current status of the session"
-    )
-    created_at: str = Field(..., description="ISO timestamp when the session was created")
-    updated_at: str = Field(..., description="ISO timestamp when the session was last modified")
-    saved_at: Optional[str] = Field(None, description="ISO timestamp when the session was explicitly saved")
-
-    # List of turn IDs in this session, in order
-    turn_ids: List[str] = Field(default_factory=list, description="Ordered list of turn IDs belonging to this session")
-
-    # Aggregated statistics for the session (derived from referenced data)
-    total_turns: int = Field(default=0, description="Total number of turns in the session")
-    # Other statistics like total_attacks, successful_attacks, average_score would be computed dynamically from referenced data if needed.
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "session_id": "sess_manual_xyz789",
-                "run_id": "run_abc123",
-                "name": "Manual Jailbreak Test",
-                "description": "Testing manual jailbreak prompts",
-                "status": "active",
-                "created_at": "2024-01-01T11:55:00",
-                "updated_at": "2024-01-01T12:05:00",
-                "turn_ids": ["turn_1", "turn_2", "turn_3"],
-                "total_turns": 3
-            }
-        }
-
-
-# ============================================================================
 # Response Models for API
 # ============================================================================
 
@@ -235,23 +160,10 @@ class RunWithData(BaseModel):
     attacks: List[AttackData] = Field(default_factory=list)
     defences: List[DefenceData] = Field(default_factory=list)
     evaluations: List[EvaluationData] = Field(default_factory=list)
-    # Note: ManualTurn data is not directly embedded here to maintain normalization.
-    # It should be fetched separately using session_id and run_id.
 
 
 # ============================================================================
-# Validators (if any needed for consolidation)
-# ============================================================================
-
-# Example validator (can be added if complex cross-field validation is needed)
-# @validator('field_name')
-# def validate_field(cls, v):
-#     # validation logic
-#     return v
-
-
-# ============================================================================
-# Unified Session / Turn Models (Phase 2)
+# Unified Session / Turn Models
 # ============================================================================
 
 class Session(BaseModel):

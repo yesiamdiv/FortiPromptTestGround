@@ -5,7 +5,7 @@ API Request and Response Schemas
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional, Literal
 from core.config import GraphConfig
-from server.database.models import RunModel, ManualSession, ManualTurn, AttackData, DefenceData, EvaluationData
+from server.database.models import RunModel, Session, Turn, AttackData, DefenceData, EvaluationData
 
 
 # --- Run Management Schemas ---
@@ -44,21 +44,21 @@ class CreateManualSessionRequest(BaseModel):
     description: Optional[str] = Field(None, description="Optional description for the session.")
     initial_payload: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Initial payload for the first turn (e.g., user's first prompt). Can contain runtime_config.")
 
-class ManualSessionResponse(ManualSession):
+class ManualSessionResponse(Session):
     pass
 
 class SubmitManualTurnRequest(BaseModel):
     prompt: str = Field(..., description="The user's input/prompt for this manual turn.")
     runtime_config: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Runtime overrides for this specific turn.")
 
-class ManualTurnResponse(ManualTurn):
-    """Extends ManualTurn to include actual attack/defence/eval data for API response"""
+class ManualTurnResponse(Turn):
+    """Extends Turn to include actual attack/defence/eval data for API response"""
     attack_data: Optional[AttackData] = Field(None)
     defence_data: Optional[DefenceData] = Field(None)
     evaluation_data: Optional[EvaluationData] = Field(None)
 
 class ManualTurnHistoryResponse(BaseModel):
-    session: ManualSession
+    session: Session
     turns: List[ManualTurnResponse] # Returns detailed turns
 
 class SubmitManualTurnResponse(BaseModel):
