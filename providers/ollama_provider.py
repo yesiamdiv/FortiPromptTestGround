@@ -2,6 +2,8 @@
 Ollama LLM Provider
 
 Integrates with local Ollama instance for LLM inference.
+Automatically starts `ollama serve` if the service is not running
+(see `ensure_running` called during server startup in main.py).
 """
 
 from typing import Dict, Any
