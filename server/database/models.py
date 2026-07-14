@@ -121,9 +121,6 @@ class RunModel(BaseModel):
     # order (final) or a MAX aggregation (best) and are cheap to store.
     # total_iterations and successful_iterations are intentionally NOT stored here;
     # they are computed at query time from the evaluations collection via /stats.
-    final_score: Optional[float] = Field(None, description="Score of the final iteration")
-    best_score: Optional[float] = Field(None, description="Best score achieved across all iterations")
-    
     # Removed optional metadata fields: intent, target, user_id, session_id, tags
     
     class Config:
@@ -149,8 +146,6 @@ class RunModel(BaseModel):
                 "created_at": "2024-01-01T12:00:00",
                 "started_at": "2024-01-01T12:00:01",
                 "completed_at": "2024-01-01T12:05:00",
-                "final_score": 0.85,
-                "best_score": 0.85
             }
         }
 
@@ -242,53 +237,6 @@ class RunWithData(BaseModel):
     evaluations: List[EvaluationData] = Field(default_factory=list)
     # Note: ManualTurn data is not directly embedded here to maintain normalization.
     # It should be fetched separately using session_id and run_id.
-
-
-class RunSummary(BaseModel):
-    """Lightweight run summary for list views"""
-    run_id: str
-    name: str
-    status: str
-    strategy: str
-    created_at: str
-    best_score: Optional[float]
-
-
-# ============================================================================
-# Statistics Models
-# ============================================================================
-
-class RunStatistics(BaseModel):
-    """Aggregated statistics for a run"""
-    run_id: str
-    total_attacks: int
-    total_defences: int
-    total_evaluations: int
-    
-    success_rate: float
-    average_score: float
-    best_score: float
-    worst_score: float
-    
-    blocked_count: int
-    blocked_rate: float
-    
-    categories: Dict[str, int] = Field(default_factory=dict)
-
-
-class GlobalStatistics(BaseModel):
-    """Global statistics across all runs"""
-    total_runs: int
-    completed_runs: int
-    running_runs: int
-    failed_runs: int
-    
-    total_attacks: int
-    total_successful: int
-    global_success_rate: float
-    
-    by_strategy: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
-    by_category: Dict[str, int] = Field(default_factory=dict)
 
 
 # ============================================================================

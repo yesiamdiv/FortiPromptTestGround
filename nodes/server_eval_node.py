@@ -148,14 +148,14 @@ class ServerEvalNode(BaseAdversarialNode):
         response_harm = labels.get("response_harm")
         refusal       = labels.get("refusal")           # ← updated key
 
-        reasoning = (
-            f"Verdict: {verdict} | "
-            f"intent_harm={intent_harm} "
-            f"response_harm={response_harm} "
-            f"refusal={refusal}"
-            + (f" | TTB={ttb}" if ttb is not None else "")
-            + (f" | latency={latency_ms:.1f}ms" if latency_ms else "")
-        )
+        parts = []
+        if verdict:
+            parts.append(f"{verdict}")
+        if ttb is not None:
+            parts.append(f"TTB={ttb}")
+        if latency_ms:
+            parts.append(f"{latency_ms:.0f}ms")
+        reasoning = " | ".join(parts) if parts else verdict
 
         # Map verdict to success/score
         if verdict in ("HARD_REFUSAL", "FAST_REFUSAL"):

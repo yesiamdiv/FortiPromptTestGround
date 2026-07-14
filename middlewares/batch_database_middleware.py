@@ -200,27 +200,12 @@ class BatchDatabaseMiddleware(BaseMiddleware):
             return
         try:
             db_ops = get_db_ops(db)
-            context = state.get("strategy_context", {})
-            total_processed = context.get("total_processed", 0)
-            # successful_iterations is no longer cached on RunModel; derive from context.
-            successful = context.get("total_successful", context.get("successful_count", 0))
-            final_score = (successful / total_processed) if total_processed > 0 else 0.0
 
             await db_ops.update_run(run_id, {
                 "status": "completed",
                 "completed_at": datetime.utcnow().isoformat(),
-                "final_score": final_score,
-                "best_score": final_score,
-                "manual_wait_active": False,
-                "manual_input_required": None,
+                "updated_at": datetime.utcnow().isoformat(),
             })
-            step(
-                "Batch run marked COMPLETED",
-                run_id=run_id,
-                total_processed=total_processed,
-                successful=successful,
-                final_score=final_score,
-            )
         except Exception as e:
             err("BatchDatabaseMiddleware.after_run error", error=str(e))
 

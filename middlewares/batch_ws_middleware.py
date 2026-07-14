@@ -220,28 +220,8 @@ class BatchWSMiddleware(BaseMiddleware):
                             )
                             await self.ws_ops.broadcast_turn_completed(run_id, turn_id, global_index)
 
-                            # evaluation_stats_updated (existing event)
-                            current_total = chunk_start_total + local_idx + 1
                             if evaluation.success:
                                 running_successful += 1
-
-                            await self.ws_ops.broadcast_to_room(
-                                run_id,
-                                "evaluation_stats_updated",
-                                {
-                                    "type": "evaluation_stats_updated",
-                                    "run_id": run_id,
-                                    "stats": {
-                                        "total_evaluations": current_total,
-                                        "success_rate": (
-                                            running_successful / current_total if current_total else 0.0
-                                        ),
-                                        "latest_score": evaluation.score,
-                                        "latest_success": evaluation.success,
-                                        "latest_category": evaluation.category,
-                                    },
-                                },
-                            )
                         except Exception as e:
                             err("BatchWSMiddleware: eval broadcast failed", index=global_index, error=str(e))
 

@@ -13,7 +13,6 @@ from server.database.models import (
     AttackData,
     DefenceData,
     EvaluationData,
-    RunStatistics,
     ManualTurn,
     ManualSession,
     Session,
@@ -144,39 +143,6 @@ class DatabaseOperations:
         step("Run deleted", run_id=run_id)
         return result.deleted_count > 0
 
-    async def mark_run_completed(
-        self,
-        run_id: str,
-        final_score: Optional[float] = None,
-        best_score: Optional[float] = None
-    ) -> bool:
-        """
-        Mark run as completed.
-        
-        Args:
-            run_id: Run identifier
-            final_score: Final evaluation score
-            best_score: Best score achieved
-        
-        Returns:
-            True if updated
-        """
-        debug("Marking run completed", run_id=run_id)
-        _now = datetime.utcnow().isoformat()
-        updates = {
-            "status": "completed",
-            "completed_at": _now,
-            "updated_at": _now
-        }
-        
-        if final_score is not None:
-            updates["final_score"] = final_score
-        if best_score is not None:
-            updates["best_score"] = best_score
-        
-        step("Run marked completed", run_id=run_id)
-        return await self.update_run(run_id, updates)
-    
     async def mark_run_failed(self, run_id: str, error: str) -> bool:
         """
         Mark run as failed.

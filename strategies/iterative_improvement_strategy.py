@@ -97,7 +97,6 @@ class IterativeImprovementStrategy(AttackStrategy):
             "max_iterations": self.config["max_iterations"],
             "target_score": self.config["target_score"],
             "attack_history": [],
-            "best_score": 0.0,
             "best_attack": None,
             "target_achieved": False,
             "strategy_name": self.name
@@ -131,11 +130,8 @@ class IterativeImprovementStrategy(AttackStrategy):
         
         if evaluation and iteration > 0:
             current_score = evaluation.score
-            best_score = context["best_score"] if "best_score" in context else 0.0
-            if current_score > best_score:
-                context["best_score"] = current_score
-                context["best_attack"] = context["attack_history"][-1]["attack_text"] if context["attack_history"] else ""
-                debug("New best score recorded", score=current_score)
+            # (best_score tracking removed)
+            context["best_attack"] = context["attack_history"][-1]["attack_text"] if context["attack_history"] else ""
             # Note: breach is recorded but does NOT stop generation — run always completes max_iterations
         
         # --- 2. GENERATION ---

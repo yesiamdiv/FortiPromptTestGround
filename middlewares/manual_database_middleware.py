@@ -179,37 +179,9 @@ class ManualDatabaseMiddleware(BaseMiddleware):
             db_ops = get_db_ops(db)
             current_turn = state.get("current_turn", {})
             
-            final_score = None
-            if current_turn.get("evaluation"):
-                # ✓ REFACTORED: Direct property access
-                # Convert numpy types to Python native types for JSON serialization
-                final_score = float(current_turn["evaluation"].score)
-            
-            context = state.get("strategy_context", {})
-            best_score = context.get("best_score")
-            session_id = state.get("session_id")
-            
-            # 5-B1: Read session_id from state - get_session_id_for_run() does not exist
-            if not session_id:
-                session_id = context.get("session_id")
-            if not session_id:
-                err("Cannot find session_id in final_state or strategy_context", run_id=run_id)
-                await db_ops.update_run(run_id, {"status": "idle"})
-                return
-            
-            # Update run status to IDLE (Happy Path — turn complete, awaiting next user input)
-            from datetime import datetime
             await db_ops.update_run(run_id, {
-                "status": "idle",
                 "updated_at": datetime.utcnow().isoformat()
             })
-            
-            await db_ops.update_session(
-                session_id,
-                final_score=final_score,
-                best_score=best_score,
-                status="active",
-            )
             
             step("Manual run turn completed, state saved, set to IDLE", run_id=run_id)
         

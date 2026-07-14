@@ -71,7 +71,7 @@ async def get_run_stats(
     run_id: str,
     db_ops: DatabaseOperations = Depends(_get_db_ops_dependency)
 ):
-    """Get computed statistics for a run."""
+    """Get basic aggregate statistics for a run."""
     tracer("Getting run stats", run_id=run_id)
     run = await db_ops.get_run(run_id)
     if not run:
@@ -81,26 +81,77 @@ async def get_run_stats(
     defences = await db_ops.get_defences(run_id)
     evaluations = await db_ops.get_evaluations(run_id)
 
-    total = len(evaluations)
-    successes = sum(1 for e in evaluations if e.success)
     blocked = sum(1 for d in defences if d.was_blocked)
-    scores = [e.score for e in evaluations]
-
-    categories: dict = {}
-    for e in evaluations:
-        categories[e.category] = categories.get(e.category, 0) + 1
+    breaches = sum(1 for e in evaluations if e.success)
+    total_eval = len(evaluations)
 
     return {
-        "run_id": run_id,
         "total_attacks": len(attacks),
         "total_defences": len(defences),
-        "total_evaluations": total,
-        "success_rate": successes / total if total else 0.0,
-        "blocked_rate": blocked / len(defences) if defences else 0.0,
-        "average_score": sum(scores) / len(scores) if scores else 0.0,
-        "best_score": max(scores) if scores else None,
-        "categories": categories,
+        "blocked_defences": blocked,
+        "passed_defences": len(defences) - blocked,
+        "total_evaluations": total_eval,
+        "breaches": breaches,
+        "defended": total_eval - breaches,
+        "breach_rate": breaches / total_eval if total_eval else 0.0,
     }
+
+
+@router.get("/runs/{run_id}/stats/charts")
+async def get_run_charts(
+    run_id: str,
+    db_ops: DatabaseOperations = Depends(_get_db_ops_dependency)
+):
+    """Get dynamic chart data for a run (defence layer breakdown, eval categories, etc.)."""
+    tracer("Getting run charts", run_id=run_id)
+    run = await db_ops.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run {run_id} not found.")
+
+    defences = await db_ops.get_defences(run_id)
+    evaluations = await db_ops.get_evaluations(run_id)
+
+    charts = []
+
+    # ── Defence layer breakdown (pie chart) ──
+    layer_counts: dict = {}
+    for d in defences:
+        if d.was_blocked and d.metadata:
+            layer = d.metadata.get("blocked_by")
+            if layer:
+                layer_counts[layer] = layer_counts.get(layer, 0) + 1
+
+    if layer_counts:
+        colours = ["#EF4444", "#F59E0B", "#3B82F6", "#8B5CF6", "#EC4899", "#14B8A6", "#84CC16"]
+        charts.append({
+            "id": "defence-layer-breakdown",
+            "title": "Blocks by Defence Layer",
+            "type": "pie",
+            "data": [
+                {"label": layer, "value": count, "color": colours[i % len(colours)]}
+                for i, (layer, count) in enumerate(sorted(layer_counts.items(), key=lambda x: -x[1]))
+            ],
+        })
+
+    # ── Evaluation category breakdown (pie chart) ──
+    category_counts: dict = {}
+    for e in evaluations:
+        cat = e.category or "unknown"
+        category_counts[cat] = category_counts.get(cat, 0) + 1
+
+    if category_counts:
+        colours = ["#DC2626", "#F59E0B", "#6366F1", "#22C55E", "#EC4899", "#14B8A6", "#84CC16"]
+        charts.append({
+            "id": "eval-category-breakdown",
+            "title": "Evaluations by Category",
+            "type": "pie",
+            "data": [
+                {"label": cat, "value": count, "color": colours[i % len(colours)]}
+                for i, (cat, count) in enumerate(sorted(category_counts.items(), key=lambda x: -x[1]))
+            ],
+        })
+
+    return {"charts": charts}
 
 
 # ============================================================================
