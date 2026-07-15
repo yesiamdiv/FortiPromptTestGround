@@ -9,355 +9,601 @@ All API endpoints are prefixed with `/api/v1`.
 ### 1.1 Run Management
 
 #### `POST /runs`
-*   **Description:** Creates a new adversarial run. This initializes a run record in the database but does not start execution immediately. The `graph_config` determines if the run is `manual` or `automatic`.
-*   **Method:** `POST`
-*   **Request Body (`CreateRunRequest`):**
-    ```json
-    {
-        "name": "string",
-        "description": "Optional detailed description for the run.",
-        "config": { 
-            "graph_type": "automatic",// or manual
-            "attack_node_config": {
-                    "node_type": "llm_attack",
-                },
-                "defense_node_config": {
-                    "node_type": "heuristic_defense"
-                },
-                "evaluation_node_config": {
-                    "node_type": "llm_eval"
-                },
-                "strategy_config": {
-                    "strategy_name": "iterative_improvement",
-                    "strategy_params": {/* optionaly empty for this api*/}
-                },
-        },
-        "payload": { /* optional payload*/ }
-    }
-    ```
-*   **Responses (`RunResponse`):**
-    *   `201 Created`: `{"run_id": "string", "status": "idle", "message": "Run created successfully."}`
-    *   `500 Internal Server Error`: `{"detail": "Failed to create run: ..."}`
+- **Description:** Creates a new adversarial run. This initializes a run record in the database but does not start execution immediately. The `graph_config.graph_type` determines if the run is `automatic`, `manual`, or `batch`.
+- **Method:** `POST`
+- **Request Body (`CreateRunRequest`):**
+  ```json
+  {
+      "name": "string",
+      "description": "Optional detailed description for the run.",
+      "config": {
+          "graph_type": "automatic",
+          "attack_node_config": { "node_type": "llm_attack" },
+          "defense_node_config": { "node_type": "heuristic_defense" },
+          "evaluation_node_config": { "node_type": "llm_eval" },
+          "strategy_config": {
+              "strategy_name": "iterative_improvement",
+              "strategy_params": {}
+          }
+      },
+      "payload": {}
+  }
+  ```
+- **Responses (`RunResponse`):**
+  - `201 Created`: `{"run_id": "string", "status": "idle", "message": "Run created successfully."}`
+  - `500 Internal Server Error`: `{"detail": "Failed to create run: ..."}`
 
 #### `PATCH /runs/{run_id}`
-*   **Description:** Updates configuration for an existing run (e.g., name, description, or strategy parameters within `graph_config`). This allows dynamic adjustment of run settings before or during idle states.
-*   **Method:** `PATCH`
-*   **Path Parameters:**
-    *   `run_id` (string): The ID of the run to update.
-*   **Request Body (`UpdateRunRequest`):**
-    ```json
-    {
-        "name": "Optional new name",
-        "description": "Optional new description",
-        "strategy_params": { /* Optional new strategy_params from the dynamic list of strategy dependencies*/ }
-    }
-    ```
-*   **Responses (`RunDetailsResponse`):**
-    *   `200 OK`: `RunDetailsResponse` object (reflecting updated run details)
-    *   `404 Not Found`: `{"detail": "Run with ID ... not found."}`
-    *   `500 Internal Server Error`: `{"detail": "Failed to update run ...: ..."}`
+- **Description:** Updates configuration for an existing run (e.g., name, description, or strategy/ node parameters).
+- **Method:** `PATCH`
+- **Path Parameters:**
+  - `run_id` (string): The ID of the run to update.
+- **Request Body (`UpdateRunRequest`):**
+  ```json
+  {
+      "name": "Optional new name",
+      "description": "Optional new description",
+      "strategy_params": {}
+  }
+  ```
+- **Responses (`RunDetailsResponse`):**
+  - `200 OK`: `RunDetailsResponse` object
+  - `404 Not Found`: `{"detail": "Run with ID ... not found."}`
 
 #### `POST /runs/{run_id}/start`
-*   **Description:** Starts or resumes an existing adversarial run. For `automatic` runs, this initiates the continuous loop. For `manual` runs, this initiates the first turn or resumes from an `idle` state after user input.
-*   **Method:** `POST`
-*   **Path Parameters:**
-    *   `run_id` (string): The ID of the run to start.
-*   **Request Body (Optional `payload`):**
-    ```json
-    { 
-        "prompt": "User's initial prompt for manual run", 
-        "session_id": "optional_session_id_for_manual_resume",
-        "runtime_config": { /* Dynamic runtime overrides */ }
-    }
-    ```
-*   **Responses (`RunResponse`):**
-    *   `200 OK`: `{"run_id": "string", "status": "running"|"idle", "message": "Run started successfully"}` (Status will reflect the new IDLE state after turn completion for manual runs)
-    *   `400 Bad Request`: `{"detail": "Run is already running" | "Cannot start run ... in status: ..."}`
-    *   `404 Not Found`: `{"detail": "Run with ID ... not found"}`
-    *   `500 Internal Server Error`: `{"detail": "Failed to start run: ..."}`
+- **Description:** Starts or resumes an existing adversarial run. For `automatic` runs this begins the loop. For `manual` runs this executes one turn.
+- **Method:** `POST`
+- **Path Parameters:**
+  - `run_id` (string): The ID of the run to start.
+- **Request Body (optional):**
+  ```json
+  {
+      "prompt": "User's input for manual run",
+      "session_id": "optional session for manual resume",
+      "runtime_config": {}
+  }
+  ```
+- **Responses (`RunResponse`):**
+  - `200 OK`: `{"run_id": "string", "status": "running"|"idle", "message": "Run started successfully"}`
+  - `400 Bad Request`: `{"detail": "Run is already running" | "Cannot start run ... in status: ..."}`
+  - `404 Not Found`: `{"detail": "Run with ID ... not found"}`
 
 #### `POST /runs/{run_id}/stop`
-*   **Description:** Stops a currently running adversarial run.
-*   **Method:** `POST`
-*   **Path Parameters:**
-    *   `run_id` (string): The ID of the run to stop.
-*   **Responses (`RunResponse`):**
-    *   `200 OK`: `{"run_id": "string", "status": "stopped"}`
-    *   `404 Not Found`: `{"detail": "Run ... not active or executor not found"}`
-    *   `500 Internal Server Error`: `{"detail": "Failed to stop run: ..."}`
+- **Description:** Stops a currently running adversarial run.
+- **Method:** `POST`
+- **Path Parameters:**
+  - `run_id` (string): The ID of the run to stop.
+- **Responses (`RunResponse`):**
+  - `200 OK`: `{"run_id": "string", "status": "stopped"}`
+  - `404 Not Found`: `{"detail": "Run ... not active or executor not found"}`
 
 #### `GET /runs`
-*   **Description:** Retrieves a list of all adversarial runs.
-*   **Method:** `GET`
-*   **Responses (`ListRunsResponse`):**
-    *   `200 OK`: `{"runs": [...]}` (List of `RunModel` objects)
-    *   `500 Internal Server Error`: `{"detail": "Failed to list runs: ..."}`
+- **Description:** Retrieves a list of all adversarial runs.
+- **Method:** `GET`
+- **Responses (`ListRunsResponse`):**
+  - `200 OK`: `{"runs": [...]}`
+  - `500 Internal Server Error`: `{"detail": "Failed to list runs: ..."}`
 
 #### `GET /runs/{run_id}`
-*   **Description:** Retrieves detailed information about a specific adversarial run.
-*   **Method:** `GET`
-*   **Path Parameters:**
-    *   `run_id` (string): The ID of the run to retrieve.
-*   **Responses (`RunDetailsResponse`):**
-    *   `200 OK`: `RunDetailsResponse` object
-    *   `404 Not Found`: `{"detail": "Run with ID ... not found."}`
-    *   `500 Internal Server Error`: `{"detail": "Failed to get run details: ..."}`
+- **Description:** Retrieves detailed information about a specific run.
+- **Method:** `GET`
+- **Path Parameters:**
+  - `run_id` (string): The ID of the run.
+- **Responses (`RunDetailsResponse`):**
+  - `200 OK`: `RunDetailsResponse` object
+  - `404 Not Found`: `{"detail": "Run with ID ... not found."}`
 
-#### `GET /strategies`
-*   **Description:** Lists all available attack strategies and their JSON configuration schemas. This allows the frontend to dynamically build forms for strategy configuration.
-*   **Method:** `GET`
-*   **Responses (`ListStrategiesResponse`):**
-    *   `200 OK`: `{"strategies": [{"strategy_name": "string", "schema_definition": {}}]}`
-    *   `500 Internal Server Error`: `{"detail": "Failed to list strategies: ..."}`
+#### `DELETE /runs/{run_id}`
+- **Description:** Deletes a run and all its associated data.
+- **Method:** `DELETE`
+- **Path Parameters:**
+  - `run_id` (string): The ID of the run to delete.
+- **Responses:**
+  - `200 OK`: `{"message": "Run deleted successfully"}`
+  - `404 Not Found`: `{"detail": "Run with ID ... not found."}`
 
-### 1.2 Manual Run Sessions & Turns
+### 1.2 Statistics
 
-These endpoints are prefixed with `/api/v1` and are nested under `/runs/{run_id}`.
+#### `GET /runs/{run_id}/stats`
+- **Description:** Returns aggregate statistics for a run, computed live from the attacks/defences/evaluations collections.
+- **Method:** `GET`
+- **Path Parameters:**
+  - `run_id` (string): The ID of the run.
+- **Responses:**
+  - `200 OK`:
+    ```json
+    {
+        "total_attacks": 42,
+        "total_defences": 42,
+        "blocked_defences": 30,
+        "passed_defences": 12,
+        "total_evaluations": 42,
+        "breaches": 5,
+        "defended": 37,
+        "breach_rate": 0.119
+    }
+    ```
+  - `404 Not Found`: `{"detail": "Run ... not found."}`
+
+#### `GET /runs/{run_id}/stats/charts`
+- **Description:** Returns declarative chart data for the frontend. Currently provides two pie charts: defence-layer breakdown and evaluation-category breakdown.
+- **Method:** `GET`
+- **Path Parameters:**
+  - `run_id` (string): The ID of the run.
+- **Responses:**
+  - `200 OK`:
+    ```json
+    {
+        "charts": [
+            {
+                "id": "defence-layer-breakdown",
+                "title": "Blocks by Defence Layer",
+                "type": "pie",
+                "data": [
+                    {"label": "heuristic", "value": 15, "color": "#EF4444"},
+                    {"label": "llm", "value": 8, "color": "#F59E0B"}
+                ]
+            },
+            {
+                "id": "eval-category-breakdown",
+                "title": "Evaluations by Category",
+                "type": "pie",
+                "data": [
+                    {"label": "safe", "value": 37, "color": "#DC2626"},
+                    {"label": "jailbreak", "value": 3, "color": "#F59E0B"}
+                ]
+            }
+        ]
+    }
+    ```
+  - `404 Not Found`: `{"detail": "Run ... not found."}`
+
+### 1.3 Run Data (Attacks / Defences / Evaluations)
+
+#### `GET /runs/{run_id}/attacks`
+- **Description:** Lists all attack payloads generated during a run.
+- **Method:** `GET`
+- **Path Parameters:**
+  - `run_id` (string): The ID of the run.
+- **Responses:**
+  - `200 OK`: `{"attacks": [...]}`
+
+#### `GET /runs/{run_id}/defences`
+- **Description:** Lists all defence responses recorded during a run.
+- **Method:** `GET`
+- **Path Parameters:**
+  - `run_id` (string): The ID of the run.
+- **Responses:**
+  - `200 OK`: `{"defences": [...]}`
+
+#### `GET /runs/{run_id}/evaluations`
+- **Description:** Lists all evaluations recorded during a run.
+- **Method:** `GET`
+- **Path Parameters:**
+  - `run_id` (string): The ID of the run.
+- **Responses:**
+  - `200 OK`: `{"evaluations": [...]}`
+
+### 1.4 Sessions & Turns
+
+Endpoints under `/runs/{run_id}/sessions` handle both manual and batch session management.
 
 #### `POST /runs/{run_id}/sessions`
-*   **Description:** Creates a new manual interaction session within a given run. This is the entry point for a human-in-the-loop chat. If `initial_payload` is provided, it can be used to kick off the first turn.
-*   **Method:** `POST`
-*   **Path Parameters:**
-    *   `run_id` (string): The ID of the parent run.
-*   **Request Body (`CreateManualSessionRequest`):**
-    ```json
-    {
-        "name": "string",
-        "description": "Optional description for the session.",
-        "initial_payload": { /* Initial payload for the first turn (e.g., user's first prompt). Can contain runtime_config. */ }
-    }
-    ```
-*   **Responses (`ManualSessionResponse`):**
-    *   `201 Created`: `ManualSessionResponse` object
-    *   `400 Bad Request`: `{"detail": "Run is not configured for manual sessions."}`
-    *   `404 Not Found`: `{"detail": "Run with ID ... not found."}`
-    *   `500 Internal Server Error`: `{"detail": "Failed to create manual session: ..."}`
+- **Description:** Creates a new interaction session within a run. For manual runs, this is the entry point for a chat session.
+- **Method:** `POST`
+- **Path Parameters:**
+  - `run_id` (string): The ID of the parent run.
+- **Request Body (`CreateSessionRequest`):**
+  ```json
+  {
+      "name": "My Session",
+      "description": "Optional description",
+      "initial_payload": { "prompt": "Hello" }
+  }
+  ```
+- **Responses:**
+  - `201 Created`: `Session` object (unified session model)
+  - `400 Bad Request`: `{"detail": "Run is not configured for manual sessions."}`
+  - `404 Not Found`: `{"detail": "Run with ID ... not found."}`
 
 #### `POST /runs/{run_id}/sessions/{session_id}/manual_turn`
-*   **Description:** Submits user input (e.g., an attack prompt) for a manual turn within a session. This resumes the manual run's execution for one cycle (Attack -> Defence -> Eval).
-*   **Method:** `POST`
-*   **Path Parameters:**
-    *   `run_id` (string): The ID of the parent run.
-    *   `session_id` (string): The ID of the manual session.
-*   **Request Body (`SubmitManualTurnRequest`):**
-    ```json
-    {
-        "prompt": "The user's input/prompt for this manual turn.",
-        "runtime_config": { /* Dynamic runtime overrides for this specific turn. */ }
-    }
-    ```
-*   **Responses (`RunResponse`):**
-    *   `200 OK`: `{"run_id": "string", "status": "idle", "message": "Run started successfully"}` (Status will reflect the new IDLE state after turn completion)
-    *   `404 Not Found`: `{"detail": "Manual session ... not found for run ..."}`
-    *   `500 Internal Server Error`: `{"detail": "Failed to submit manual turn: ..."}`
+- **Description:** Submits user input for a manual turn within a session. Triggers one Attack → Defence → Eval cycle.
+- **Method:** `POST`
+- **Path Parameters:**
+  - `run_id` (string): The ID of the parent run.
+  - `session_id` (string): The ID of the session.
+- **Request Body (`SubmitTurnRequest`):**
+  ```json
+  {
+      "prompt": "User's attack prompt",
+      "runtime_config": {}
+  }
+  ```
+- **Responses (`SubmitTurnResponse`):**
+  - `200 OK`: `{"run_id": "string", "session_id": "string", "turn_id": "pending", "status": "running"}`
+  - `404 Not Found`: `{"detail": "Manual session ... not found for run ..."}`
 
 #### `GET /runs/{run_id}/sessions/{session_id}`
-*   **Description:** Retrieves detailed information about a specific manual session.
-*   **Method:** `GET`
-*   **Path Parameters:**
-    *   `run_id` (string): The ID of the parent run.
-    *   `session_id` (string): The ID of the manual session.
-*   **Responses (`ManualSessionResponse`):**
-    *   `200 OK`: `ManualSessionResponse` object
-    *   `404 Not Found`: `{"detail": "Manual session ... not found for run ..."}`
-    *   `500 Internal Server Error`: `{"detail": "Failed to get manual session details: ..."}`
+- **Description:** Retrieves details of a specific session.
+- **Method:** `GET`
+- **Path Parameters:**
+  - `run_id` (string): The ID of the parent run.
+  - `session_id` (string): The ID of the session.
+- **Responses:**
+  - `200 OK`: `Session` object
+  - `404 Not Found`: `{"detail": "Session ... not found for run ..."}`
 
 #### `GET /runs/{run_id}/sessions/{session_id}/history`
-*   **Description:** Retrieves the complete history of turns for a manual session, including detailed attack, defense, and evaluation data for each turn.
-*   **Method:** `GET`
-*   **Path Parameters:**
-    *   `run_id` (string): The ID of the parent run.
-    *   `session_id` (string): The ID of the manual session.
-*   **Responses (`ManualTurnHistoryResponse`):**
-    *   `200 OK`: `{"session": ManualSession, "turns": [ManualTurnResponse, ...]}`
-    *   `404 Not Found`: `{"detail": "Manual session ... not found for run ..."}`
-    *   `500 Internal Server Error`: `{"detail": "Failed to get manual turn history: ..."}`
+- **Description:** Retrieves the complete turn history for a session, including detailed attack/defence/evaluation data for each turn.
+- **Method:** `GET`
+- **Path Parameters:**
+  - `run_id` (string): The ID of the parent run.
+  - `session_id` (string): The ID of the session.
+- **Responses (`SessionHistoryResponse`):**
+  - `200 OK`:
+    ```json
+    {
+        "session": { "...": "..." },
+        "turns": [
+            {
+                "turn_id": "...",
+                "attack_data": { "...": "..." },
+                "defence_data": { "...": "..." },
+                "evaluation_data": { "...": "..." }
+            }
+        ]
+    }
+    ```
+  - `404 Not Found`: `{"detail": "Session ... not found for run ..."}`
 
-### 1.3 Provider Discovery
+#### `GET /runs/{run_id}/sessions`
+- **Description:** Lists all sessions for a run, ordered by creation time.
+- **Method:** `GET`
+- **Path Parameters:
+  - `run_id` (string): The ID of the run.
+- **Responses:**
+  - `200 OK`: `{"sessions": [...]}`
+
+#### `DELETE /runs/{run_id}/sessions/{session_id}`
+- **Description:** Deletes a session and all its turns.
+- **Method:** `DELETE`
+- **Path Parameters:**
+  - `run_id` (string): The ID of the parent run.
+  - `session_id` (string): The ID of the session to delete.
+- **Responses:**
+  - `200 OK`: `{"message": "Session ... deleted successfully"}`
+  - `404 Not Found`: `{"detail": "Session ... not found."}`
+
+### 1.5 Discovery
+
+#### `GET /strategies`
+- **Description:** Lists all available attack strategies and their JSON configuration schemas.
+- **Method:** `GET`
+- **Responses (`ListStrategiesResponse`):**
+  - `200 OK`: `{"strategies": [{"strategy_name": "string", "schema_definition": {}}]}`
 
 #### `GET /providers`
-*   **Description:** Returns a list of all registered LLM providers (e.g., "ollama", "openai", "gemini"). This allows the frontend to dynamically populate dropdowns for provider selection.
-*   **Method:** `GET`
-*   **Responses (`ListProvidersResponse`):**
-    *   `200 OK`: `{"providers": [{"name": "string"}]}`
-    *   `500 Internal Server Error`: `{"detail": "Failed to list providers: ..."}`
-
-### 1.4 Node Discovery
+- **Description:** Lists all registered LLM providers (e.g., "ollama", "openai", "gemini").
+- **Method:** `GET`
+- **Responses (`ListProvidersResponse`):**
+  - `200 OK`: `{"providers": [{"name": "string"}]}`
 
 #### `GET /nodes/attack`
-*   **Description:** Lists available attack node types and their configuration schemas. This enables the frontend to dynamically build forms for configuring attack nodes.
-*   **Method:** `GET`
-*   **Responses (`ListNodeSchemasResponse`):**
-    *   `200 OK`: `{"nodes": [{"node_type": "attack", "node_name": "string", "schema_definition": {}}]}`
-    *   `500 Internal Server Error`: `{"detail": "Failed to list attack nodes: ..."}`
+- **Description:** Lists available attack node types and their configuration schemas.
+- **Method:** `GET`
+- **Responses (`ListNodeSchemasResponse`):**
+  - `200 OK`: `{"nodes": [{"node_type": "attack", "node_name": "string", "schema_definition": {}}]}`
 
 #### `GET /nodes/defense`
-*   **Description:** Lists available defense node types and their configuration schemas. This enables the frontend to dynamically build forms for configuring defense nodes.
-*   **Method:** `GET`
-*   **Responses (`ListNodeSchemasResponse`):**
-    *   `200 OK`: `{"nodes": [{"node_type": "defense", "node_name": "string", "schema_definition": {}}]}`
-    *   `500 Internal Server Error`: `{"detail": "Failed to list defense nodes: ..."}`
+- **Description:** Lists available defense node types and their configuration schemas.
+- **Method:** `GET`
+- **Responses (`ListNodeSchemasResponse`):**
+  - `200 OK`: `{"nodes": [{"node_type": "defense", "node_name": "string", "schema_definition": {}}]}`
 
 #### `GET /nodes/evaluation`
-*   **Description:** Lists available evaluation node types and their configuration schemas. This enables the frontend to dynamically build forms for configuring evaluation nodes.
-*   **Method:** `GET`
-*   **Responses (`ListNodeSchemasResponse`):**
-    *   `200 OK`: `{"nodes": [{"node_type": "evaluation", "node_name": "string", "schema_definition": {}}]}`
-    *   `500 Internal Server Error`: `{"detail": "Failed to list evaluation nodes: ..."}`
+- **Description:** Lists available evaluation node types and their configuration schemas.
+- **Method:** `GET`
+- **Responses (`ListNodeSchemasResponse`):**
+  - `200 OK`: `{"nodes": [{"node_type": "evaluation", "node_name": "string", "schema_definition": {}}]}`
 
 ## 2. WebSocket Events
 
-All WebSocket events are broadcast to specific rooms. General run events are broadcast to a `run_id` room. Manual run events are broadcast to a `session_id` room. The `SocketIOManager` manages client connections and rooms.
+All WebSocket events use Socket.IO with `transports: ['websocket']` (no HTTP polling). General run events broadcast to a `run_id` room. Manual run events broadcast to a `session_id` room.
 
-### 2.1 General Run Events
+### 2.1 Connection Events
+
+#### `connected`
+- **Description:** Sent to the client immediately after a successful Socket.IO handshake.
+- **Broadcast Room:** Client's own SID
+- **Payload:**
+  ```json
+  {
+      "status": "connected",
+      "session_id": "socket_sid"
+  }
+  ```
+
+#### `room_joined`
+- **Description:** Confirms the client joined a `run_id` room.
+- **Broadcast Room:** Client's own SID
+- **Payload:**
+  ```json
+  {
+      "status": "joined",
+      "room": "run_id",
+      "run_id": "string"
+  }
+  ```
+
+#### `session_room_joined`
+- **Description:** Confirms the client joined a `session_id` room.
+- **Broadcast Room:** Client's own SID
+- **Payload:**
+  ```json
+  {
+      "status": "joined",
+      "room": "session_id",
+      "session_id": "string"
+  }
+  ```
+
+#### `error`
+- **Description:** Sent when a client request (join/leave/ping) fails.
+- **Broadcast Room:** Client's own SID
+- **Payload:**
+  ```json
+  {
+      "message": "error description"
+  }
+  ```
+
+### 2.2 Automatic Run Events
 
 #### `run_started`
-*   **Description:** Signals the beginning of a run's execution.
-*   **Broadcast Room:** `run_id`
-*   **Payload:**
-    ```json
-    {
-        "type": "run_started",
-        "run_id": "string",
-        "strategy": "string",
-        "intent": "string",
-        "target": "string",
-        "timestamp": "ISO datetime string",
-        "session_id": "optional_string" // Included for manual runs
-    }
-    ```
+- **Description:** Signals the beginning of a run's execution.
+- **Broadcast Room:** `run_id`
+- **Payload:**
+  ```json
+  {
+      "type": "run_started",
+      "run_id": "string",
+      "strategy": "string",
+      "intent": "string",
+      "target": "string",
+      "session_id": "string",
+      "timestamp": "ISO datetime"
+  }
+  ```
+
+#### `attack_generated`
+- **Description:** Broadcast when an attack payload has been produced by the strategy.
+- **Broadcast Room:** `run_id`
+- **Payload:**
+  ```json
+  {
+      "type": "attack_generated",
+      "run_id": "string",
+      "turn_id": "string",
+      "index": 0,
+      "attack": {
+          "preview": "first 200 chars",
+          "full_text": "complete attack text",
+          "type": "text|chat|json",
+          "metadata": {},
+          "timestamp": "ISO datetime"
+      }
+  }
+  ```
+
+#### `defence_response`
+- **Description:** Broadcast when the defence node has processed the attack.
+- **Broadcast Room:** `run_id`
+- **Payload:**
+  ```json
+  {
+      "type": "defence_response",
+      "run_id": "string",
+      "turn_id": "string",
+      "index": 0,
+      "defence": {
+          "preview": "first 200 chars",
+          "full_text": "complete response",
+          "status_code": 200,
+          "was_blocked": false,
+          "metadata": {},
+          "timestamp": "ISO datetime"
+      }
+  }
+  ```
+
+#### `evaluation_complete`
+- **Description:** Broadcast when the evaluation node has scored the turn.
+- **Broadcast Room:** `run_id`
+- **Payload:**
+  ```json
+  {
+      "type": "evaluation_complete",
+      "run_id": "string",
+      "turn_id": "string",
+      "index": 0,
+      "evaluation": {
+          "score": 0.0,
+          "success": false,
+          "category": "safe",
+          "reasoning": "...",
+          "summary": "...",
+          "metadata": {}
+      }
+  }
+  ```
+
+#### `turn_completed`
+- **Description:** Signals that a full automatic turn cycle has finished.
+- **Broadcast Room:** `run_id`
+- **Payload:**
+  ```json
+  {
+      "type": "turn_completed",
+      "run_id": "string",
+      "turn_id": "string",
+      "index": 0,
+      "evaluation": { "score": 0.0, "success": false, "category": "safe" }
+  }
+  ```
 
 #### `run_progress`
-*   **Description:** Provides general progress updates for a run, often used for iteration tracking.
-*   **Broadcast Room:** `run_id`
-*   **Payload:**
-    ```json
-    {
-        "type": "run_progress",
-        "run_id": "string",
-        "current": "integer",
-        "total": "integer",
-        "message": "string (e.g., 'Routing: attack')",
-        "progress_percent": "float"
-    }
-    ```
+- **Description:** Provides iteration progress updates.
+- **Broadcast Room:** `run_id`
+- **Payload:**
+  ```json
+  {
+      "type": "run_progress",
+      "run_id": "string",
+      "current": 1,
+      "total": 10,
+      "message": "Routing: attack",
+      "progress_percent": 10.0
+  }
+  ```
 
 #### `run_completed`
-*   **Description:** Signals the successful completion of an *automatic* run.
-*   **Broadcast Room:** `run_id`
-*   **Payload:**
-    ```json
-    {
-        "type": "run_completed",
-        "run_id": "string",
-        "total_attempts": "integer",
-        "routing_signal": "string (e.g., '__end__')",
-        "timestamp": "ISO datetime string",
-        "final_evaluation": { /* ... evaluation summary ... */ }
-    }
-    ```
+- **Description:** Signals successful completion of an automatic run.
+- **Broadcast Room:** `run_id`
+- **Payload:**
+  ```json
+  {
+      "type": "run_completed",
+      "run_id": "string",
+      "total_attempts": 10,
+      "routing_signal": "__end__",
+      "timestamp": "ISO datetime",
+      "final_evaluation": { "...": "..." }
+  }
+  ```
 
 #### `run_error`
-*   **Description:** Signals that an error occurred during a run's execution.
-*   **Broadcast Room:** `run_id`
-*   **Payload:**
-    ```json
-    {
-        "type": "run_error",
-        "run_id": "string",
-        "error": "string (error message)",
-        "error_type": "string (e.g., 'ValueError')"
-    }
-    ```
+- **Description:** Signals an error during run execution.
+- **Broadcast Room:** `run_id`
+- **Payload:**
+  ```json
+  {
+      "type": "run_error",
+      "run_id": "string",
+      "error": "error message",
+      "error_type": "ValueError"
+  }
+  ```
 
 #### `new_run_available`
-*   **Description:** Broadcast to *all* connected clients when a new run record is created in the database, allowing UIs to update run lists.
-*   **Broadcast Room:** All clients (global emit)
-*   **Payload:**
-    ```json
-    {
-        "type": "new_run_available",
-        "run_id": "string",
-        "run_summary": { // New: Summary of the created run
-            "name": "string",
-            "strategy": "string",
-            "status": "string"
-        }
-    }
-    ```
+- **Description:** Broadcast to all connected clients when a new run is created.
+- **Broadcast Room:** All clients (global)
+- **Payload:**
+  ```json
+  {
+      "type": "new_run_available",
+      "run_id": "string",
+      "run_summary": { "name": "string", "strategy": "string", "status": "idle" }
+  }
+  ```
 
-### 2.2 Manual Run Specific Events
+### 2.3 Manual Run Events
 
-#### `manual_attack_generated`
-*   **Description:** Broadcast when an attack prompt has been generated by the strategy within a manual session.
-*   **Broadcast Room:** `session_id`
-*   **Payload:**
-    ```json
-    {
-        "type": "manual_attack_generated",
-        "run_id": "string",
-        "session_id": "string",
-        "turn_id": "string",
-        "index": "integer (iteration/turn number)",
-        "attack": { /* AttackData preview/full_text */ }
-    }
-    ```
-
-#### `manual_defence_response`
-*   **Description:** Broadcast when the defense system has processed the attack and returned a response within a manual session.
-*   **Broadcast Room:** `session_id`
-*   **Payload:**
-    ```json
-    {
-        "type": "manual_defence_response",
-        "run_id": "string",
-        "session_id": "string",
-        "turn_id": "string",
-        "index": "integer",
-        "defence": { /* DefenceData preview/full_text, status_code, was_blocked */ }
-    }
-    ```
-
-#### `manual_evaluation_complete`
-*   **Description:** Broadcast when the evaluation of the attack and defense response is complete within a manual session.
-*   **Broadcast Room:** `session_id`
-*   **Payload:**
-    ```json
-    {
-        "type": "manual_evaluation_complete",
-        "run_id": "string",
-        "session_id": "string",
-        "turn_id": "string",
-        "index": "integer",
-        "evaluation": { /* EvaluationData score, success, reasoning */ }
-    }
-    ```
-
-#### `manual_turn_completed`
-*   **Description:** Signals that a full manual turn cycle (Attack -> Defence -> Eval) has completed.
-*   **Broadcast Room:** `session_id`
-*   **Payload:**
-    ```json
-    {
-        "type": "manual_turn_completed",
-        "run_id": "string",
-        "session_id": "string",
-        "turn_id": "string",
-        "index": "integer"
-    }
-    ```
+Manual events broadcast to the `session_id` room.
 
 #### `run_idle`
-*   **Description:** Broadcast after a *manual* run completes one turn, indicating that the system has finished processing and is now `idle`, awaiting the next user input for the session.
-*   **Broadcast Room:** `run_id` (or `session_id` depending on `ws_operations.py` implementation, currently in `run_id` for consistency with main run status)
-*   **Payload:**
-    ```json
-    {
-        "type": "run_idle",
-        "run_id": "string",
-        "message": "Awaiting user input for next turn",
-        "last_turn_id": "string (ID of the last completed turn)",
-        "iteration_count": "integer",
-        "session_id": "string" // Included for manual runs
-    }
-    ```
+- **Description:** Broadcast after a manual run completes one turn, indicating the system is idle and awaiting the next user input.
+- **Broadcast Room:** `run_id`
+- **Payload:**
+  ```json
+  {
+      "type": "run_idle",
+      "run_id": "string",
+      "message": "Awaiting user input for next turn",
+      "last_turn_id": "string",
+      "iteration_count": 1,
+      "session_id": "string"
+  }
+  ```
+
+#### `manual_attack_generated`
+- **Description:** Broadcast when the strategy has produced an attack prompt in a manual session.
+- **Broadcast Room:** `session_id`
+- **Payload:**
+  ```json
+  {
+      "type": "manual_attack_generated",
+      "run_id": "string",
+      "session_id": "string",
+      "turn_id": "string",
+      "index": 0,
+      "attack": { "preview": "...", "full_text": "...", "type": "text", "metadata": {} }
+  }
+  ```
+
+#### `manual_defence_response`
+- **Description:** Broadcast when the defence node has responded in a manual session.
+- **Broadcast Room:** `session_id`
+- **Payload:**
+  ```json
+  {
+      "type": "manual_defence_response",
+      "run_id": "string",
+      "session_id": "string",
+      "turn_id": "string",
+      "index": 0,
+      "defence": { "preview": "...", "full_text": "...", "status_code": 200, "was_blocked": false }
+  }
+  ```
+
+#### `manual_evaluation_complete`
+- **Description:** Broadcast when evaluation finishes in a manual session.
+- **Broadcast Room:** `session_id`
+- **Payload:**
+  ```json
+  {
+      "type": "manual_evaluation_complete",
+      "run_id": "string",
+      "session_id": "string",
+      "turn_id": "string",
+      "index": 0,
+      "evaluation": { "score": 0.0, "success": false, "category": "safe", "reasoning": "...", "summary": "...", "metadata": {} }
+  }
+  ```
+
+#### `manual_turn_completed`
+- **Description:** Signals that a full manual turn cycle has finished.
+- **Broadcast Room:** `session_id`
+- **Payload:**
+  ```json
+  {
+      "type": "manual_turn_completed",
+      "run_id": "string",
+      "session_id": "string",
+      "turn_id": "string",
+      "index": 0
+  }
+  ```
+
+### 2.4 Client Actions (Emit to Server)
+
+Clients send these events to the server:
+
+#### `join_run`
+- **Description:** Subscribe to all events for a given run.
+- **Payload:** `{"run_id": "string"}`
+- **Response (server emits):** `room_joined` event
+
+#### `leave_run`
+- **Description:** Unsubscribe from a run's events.
+- **Payload:** `{"run_id": "string"}`
+- **Response (server emits):** `room_left` event
+
+#### `join_session`
+- **Description:** Subscribe to all events for a specific session.
+- **Payload:** `{"session_id": "string"}`
+- **Response (server emits):** `session_room_joined` event
+
+#### `ping`
+- **Description:** Health-check / keep-alive.
+- **Payload:** `{"timestamp": number}`
+- **Response (server emits):** `pong` event with the same timestamp
