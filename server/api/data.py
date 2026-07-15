@@ -6,8 +6,12 @@ unified Session/Turn data model. The flat collection endpoints are kept as-is
 for backwards compatibility.
 """
 
-from fastapi import APIRouter, HTTPException, Depends, status
-from typing import Any
+import csv
+import io
+
+from fastapi import APIRouter, HTTPException, Depends, status, Query
+from fastapi.responses import StreamingResponse
+from typing import Any, Dict, List
 
 from server.database.connection import get_db
 from server.database.operations import DatabaseOperations, get_db_ops
@@ -251,3 +255,96 @@ async def get_turn(
         entry["evaluation"] = evl.dict() if evl else None
 
     return {"turn": entry}
+
+
+# ============================================================================
+# Export
+# ============================================================================
+
+def _clean_turn(row: dict) -> dict:
+    """Extract only research-relevant fields from a raw turn tuple."""
+    atk = row.get("attack") or {}
+    dfn = row.get("defence") or {}
+    evl = row.get("evaluation") or {}
+    return {
+        "turn_index": row.get("index"),
+        "session_id": row.get("session_id"),
+        "attack_prompt": atk.get("prompt"),
+        "attack_metadata": atk.get("metadata"),
+        "defence_response": dfn.get("response"),
+        "defence_was_blocked": dfn.get("was_blocked"),
+        "defence_status_code": dfn.get("status_code"),
+        "defence_blocked_by": (dfn.get("metadata") or {}).get("blocked_by"),
+        "eval_score": evl.get("score"),
+        "eval_success": evl.get("success"),
+        "eval_category": evl.get("category"),
+        "eval_feedback": evl.get("feedback"),
+    }
+
+
+@router.get("/runs/{run_id}/export")
+async def export_run(
+    run_id: str,
+    format: str = Query("json", regex="^(json|csv)$"),
+    db_ops: DatabaseOperations = Depends(_get_db_ops_dependency),
+):
+    """Export run data as clean research-ready tuples (attack/defence/eval per turn).
+
+    Supports ?format=json (default) and ?format=csv.
+    """
+    run = await db_ops.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found.")
+
+    graph_type = run.graph_config.graph_type
+    rows: List[Dict] = []
+
+    if graph_type == "manual":
+        sessions = await db_ops.get_sessions_for_run(run_id)
+        for sess in sessions:
+            turns = await db_ops.get_turns_for_session(sess.session_id)
+            for turn in turns:
+                entry = turn.dict()
+                if turn.attack_data_id:
+                    atk = await db_ops.get_attack_by_id(turn.attack_data_id)
+                    entry["attack"] = atk.dict() if atk else None
+                if turn.defence_data_id:
+                    dfn = await db_ops.get_defence_by_id(turn.defence_data_id)
+                    entry["defence"] = dfn.dict() if dfn else None
+                if turn.evaluation_data_id:
+                    evl = await db_ops.get_evaluation_by_id(turn.evaluation_data_id)
+                    entry["evaluation"] = evl.dict() if evl else None
+                rows.append(_clean_turn(entry))
+    else:
+        attacks = await db_ops.get_attacks(run_id)
+        defences = await db_ops.get_defences(run_id)
+        evaluations = await db_ops.get_evaluations(run_id)
+
+        atk_by_idx = {a.index: a for a in attacks}
+        dfn_by_idx = {d.index: d for d in defences}
+        evl_by_idx = {e.index: e for e in evaluations}
+
+        all_indices = sorted(set(atk_by_idx) | set(dfn_by_idx) | set(evl_by_idx))
+        for idx in all_indices:
+            a = atk_by_idx.get(idx)
+            d = dfn_by_idx.get(idx)
+            e = evl_by_idx.get(idx)
+            rows.append(_clean_turn({
+                "index": idx,
+                "session_id": None,
+                "attack": a.dict() if a else None,
+                "defence": d.dict() if d else None,
+                "evaluation": e.dict() if e else None,
+            }))
+
+    if format == "csv":
+        if not rows:
+            return StreamingResponse(iter(["turn_index,session_id,attack_prompt,defence_response,defence_was_blocked,defence_status_code,defence_blocked_by,eval_score,eval_success,eval_category,eval_feedback\n"]), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=run_{run_id}.csv"})
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+        buf.seek(0)
+        return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=run_{run_id}.csv"})
+
+    return {"run_id": run_id, "graph_type": graph_type, "turns": rows}
