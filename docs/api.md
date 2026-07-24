@@ -174,23 +174,36 @@ Get description and schema for a specific strategy.
 ## Run Data (`server/api/data.py`)
 
 ### `GET /runs/{run_id}/attacks`
-Get all attack records for a run.
+Get all attack records for a run. Each item now includes a `session_id` field resolved by joining with the turns collection.
 
-**Response** `200 { "attacks": [AttackData, ...] }`
+**Response** `200 { "attacks": [AttackData & { session_id: string | null }, ...] }`
+
+**Example item**
+```json
+{
+  "run_id": "run_abc123",
+  "index": 0,
+  "turn_id": "turn_1",
+  "session_id": "sess_run_abc123",
+  "prompt": "Ignore previous instructions...",
+  "metadata": {},
+  "timestamp": "2024-01-01T12:00:00"
+}
+```
 
 ---
 
 ### `GET /runs/{run_id}/defences`
-Get all defence records for a run.
+Get all defence records for a run. Each item includes a `session_id` field.
 
-**Response** `200 { "defences": [DefenceData, ...] }`
+**Response** `200 { "defences": [DefenceData & { session_id: string | null }, ...] }`
 
 ---
 
 ### `GET /runs/{run_id}/evaluations`
-Get all evaluation records for a run.
+Get all evaluation records for a run. Each item includes a `session_id` field.
 
-**Response** `200 { "evaluations": [EvaluationData, ...] }`
+**Response** `200 { "evaluations": [EvaluationData & { session_id: string | null }, ...] }`
 
 ---
 
@@ -211,6 +224,23 @@ Get computed statistics for a run.
   "categories": { "harmful": 5, "misinformation": 3, "copyright": 2 }
 }
 ```
+
+---
+
+### `GET /runs/{run_id}/stats/charts`
+Get declarative chart specs for a run (defence-layer pie chart, eval-category pie chart).
+
+**Response** `200 { "charts": [{ id, title, type, data: [{ label, value, color }] }] }`
+
+---
+
+### `GET /runs/{run_id}/export`
+Export run data as clean research-ready tuples (attack / defence / eval per turn). Supports JSON and CSV formats.
+
+**Query params**
+- `format` — `"json"` (default) or `"csv"`
+
+**Response (JSON)** `200 { "run_id": "...", "graph_type": "...", "turns": [...] }`
 
 ---
 
@@ -279,17 +309,20 @@ Delete a session and its turns.
 
 ## WebSocket Events (Socket.IO)
 
-Real-time progress is broadcast over Socket.IO at `/socket.io`. Connect and listen on the `run_{run_id}` room.
+Real-time progress is broadcast over Socket.IO at `/socket.io`. Connect and listen on the `run_{run_id}` room. All automatic-run events now include `session_id` in the payload to support session-grouped UI.
 
 | Event | Payload | When |
 |---|---|---|
-| `attack_generated` | `{ run_id, turn_id, prompt, metadata }` | After attack node |
-| `defence_received` | `{ run_id, turn_id, response, was_blocked }` | After defence node |
-| `evaluation_complete` | `{ run_id, turn_id, score, success, category }` | After eval node |
-| `run_complete` | `{ run_id, status }` | Run finishes |
-| `run_error` | `{ run_id, error }` | Run fails |
+| `attack_generated` | `{ run_id, session_id, turn_id, index, attack }` | After attack node |
+| `defence_response` | `{ run_id, session_id, turn_id, index, defence }` | After defence node |
+| `evaluation_complete` | `{ run_id, session_id, turn_id, index, evaluation }` | After eval node |
+| `turn_completed` | `{ run_id, session_id, turn_id, index }` | After full attack→defence→eval cycle |
+| `run_started` | `{ run_id, strategy, intent, target, timestamp }` | Run begins |
+| `run_progress` | `{ run_id, current, total, progress_percent, message }` | Per-iteration |
+| `run_completed` | `{ run_id, total_attempts, routing_signal, timestamp, final_evaluation? }` | Run finishes |
+| `run_error` | `{ run_id, error, error_type }` | Run fails |
 
-See `docs/SOCKETIO_CLIENT_GUIDE.md` for client connection examples.
+See `docs/SOCKETIO_CLIENT_GUIDE.md` for detailed payloads and client connection examples.
 
 ---
 
@@ -373,9 +406,9 @@ Get a single turn with all linked data resolved.
 
 ## Deprecated Endpoints
 
-The following flat endpoints are kept for backward compatibility but are **deprecated**.
-They query the `attacks`, `defences`, and `evaluations` collections directly and do not
-expose Session/Turn relationships. Prefer the Session/Turn endpoints above.
+The following flat endpoints are kept for backward compatibility but are **soft-deprecated**.
+Each item now includes a `session_id` field (resolved via a turn lookup at query time), but
+the data is still flat and ungrouped. Prefer the Session/Turn endpoints above for structured access.
 
 - `GET /runs/{run_id}/attacks`
 - `GET /runs/{run_id}/defences`

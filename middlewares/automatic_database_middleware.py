@@ -93,10 +93,26 @@ class AutomaticDatabaseMiddleware(BaseMiddleware):
             context = state.get("strategy_context", {})
             iteration = context.get("iteration_count", 0)
             turn_id = state.get("current_turn", {}).get("turn_id") or f"turn_{run_id}_{iteration}"
-            session_id = state.get("session_id", f"sess_{run_id}")
+            # Derive session_id from strategy context; first session (sessions_completed=0)
+            # defaults to f"sess_{run_id}" which is created in before_run.
+            sessions_completed = context.get("sessions_completed", 0)
+            session_id = context.get("session_id") or f"sess_{run_id}"
             turn_index = state.get("turn_index", iteration)
 
             if node_name == NodeName.ATTACK and self.middleware_config.get("save_attacks"):
+                # For second+ sessions, create the Session document if it doesn't exist yet
+                if sessions_completed > 0:
+                    existing = await db_ops.get_session(session_id)
+                    if not existing:
+                        run_doc = await db_ops.get_run(run_id)
+                        run_name = run_doc.name if run_doc else run_id
+                        await db_ops.create_session(
+                            session_id=session_id,
+                            run_id=run_id,
+                            name=run_name,
+                            run_type="automatic",
+                        )
+                        step("New session created for multi-turn session", session_id=session_id)
                 # Create the Turn document on attack (first step of each cycle)
                 await db_ops.create_turn(session_id, turn_id, run_id, index=turn_index)
                 attack_id = await self._save_attack(db_ops, run_id, iteration, state, turn_id)

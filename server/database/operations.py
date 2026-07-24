@@ -555,6 +555,14 @@ class DatabaseOperations:
             return Turn(**docs[0])
         return None
 
+    async def get_turns_for_run(self, run_id: str) -> list:
+        """Get all turns for a run across all sessions, ordered by session then index."""
+        tracer("Getting turns for run", run_id=run_id)
+        cursor = self.turns.find({"run_id": run_id}).sort([("session_id", 1), ("index", 1)])
+        docs = await cursor.to_list(length=None)
+        step(f"Found {len(docs)} turns", run_id=run_id)
+        return [Turn(**{k: v for k, v in d.items() if k != "_id"}) for d in docs]
+
 
 # ========================================================================
 # Convenience function

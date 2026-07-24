@@ -28,6 +28,12 @@ async def _get_db_ops_dependency():
     return get_db_ops(db)
 
 
+async def _build_turn_session_map(db_ops: DatabaseOperations, run_id: str) -> dict:
+    """Build {turn_id: session_id} map for all turns in a run."""
+    turns = await db_ops.get_turns_for_run(run_id)
+    return {t.turn_id: t.session_id for t in turns}
+
+
 @router.get("/runs/{run_id}/attacks")
 async def get_run_attacks(
     run_id: str,
@@ -39,7 +45,13 @@ async def get_run_attacks(
     if not run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run {run_id} not found.")
     attacks = await db_ops.get_attacks(run_id)
-    return {"attacks": [a.dict() for a in attacks]}
+    turn_map = await _build_turn_session_map(db_ops, run_id)
+    result = []
+    for a in attacks:
+        d = a.dict()
+        d["session_id"] = turn_map.get(a.turn_id)
+        result.append(d)
+    return {"attacks": result}
 
 
 @router.get("/runs/{run_id}/defences")
@@ -53,7 +65,13 @@ async def get_run_defences(
     if not run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run {run_id} not found.")
     defences = await db_ops.get_defences(run_id)
-    return {"defences": [d.dict() for d in defences]}
+    turn_map = await _build_turn_session_map(db_ops, run_id)
+    result = []
+    for d in defences:
+        entry = d.dict()
+        entry["session_id"] = turn_map.get(d.turn_id)
+        result.append(entry)
+    return {"defences": result}
 
 
 @router.get("/runs/{run_id}/evaluations")
@@ -67,7 +85,13 @@ async def get_run_evaluations(
     if not run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run {run_id} not found.")
     evaluations = await db_ops.get_evaluations(run_id)
-    return {"evaluations": [e.dict() for e in evaluations]}
+    turn_map = await _build_turn_session_map(db_ops, run_id)
+    result = []
+    for e in evaluations:
+        entry = e.dict()
+        entry["session_id"] = turn_map.get(e.turn_id)
+        result.append(entry)
+    return {"evaluations": result}
 
 
 @router.get("/runs/{run_id}/stats")

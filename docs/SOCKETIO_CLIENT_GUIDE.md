@@ -202,6 +202,7 @@ socket.on('attack_generated', (data) => {
 {
   "type": "attack_generated",
   "run_id": "run_abc123",
+  "session_id": "sess_run_abc123",
   "turn_id": "turn_1",
   "index": 0,
   "attack": {
@@ -228,6 +229,7 @@ socket.on('defence_response', (data) => {
 {
   "type": "defence_response",
   "run_id": "run_abc123",
+  "session_id": "sess_run_abc123",
   "turn_id": "turn_1",
   "index": 0,
   "defence": {
@@ -256,6 +258,7 @@ socket.on('evaluation_complete', (data) => {
 {
   "type": "evaluation_complete",
   "run_id": "run_abc123",
+  "session_id": "sess_run_abc123",
   "turn_id": "turn_1",
   "index": 0,
   "evaluation": {
@@ -283,6 +286,7 @@ socket.on('turn_completed', (data) => {
 {
   "type": "turn_completed",
   "run_id": "run_abc123",
+  "session_id": "sess_run_abc123",
   "turn_id": "turn_1",
   "index": 0
 }

@@ -49,6 +49,7 @@ class WebSocketOperations:
     async def broadcast_attack_generated(
         self,
         run_id: str,
+        session_id: str,
         turn_id: str,
         index: int,
         attack_data: Dict[str, Any]
@@ -63,15 +64,17 @@ class WebSocketOperations:
             {
                 'type': 'attack_generated',
                 'run_id': run_id,
+                'session_id': session_id,
                 'turn_id': turn_id,
                 'index': index,
                 'attack': attack_data
             }
         )
-    
+
     async def broadcast_defence_response(
         self,
         run_id: str,
+        session_id: str,
         turn_id: str,
         index: int,
         defence_data: Dict[str, Any]
@@ -86,15 +89,17 @@ class WebSocketOperations:
             {
                 'type': 'defence_response',
                 'run_id': run_id,
+                'session_id': session_id,
                 'turn_id': turn_id,
                 'index': index,
                 'defence': defence_data
             }
         )
-    
+
     async def broadcast_evaluation_complete(
         self,
         run_id: str,
+        session_id: str,
         turn_id: str,
         index: int,
         evaluation_data: Dict[str, Any]
@@ -109,15 +114,17 @@ class WebSocketOperations:
             {
                 'type': 'evaluation_complete',
                 'run_id': run_id,
+                'session_id': session_id,
                 'turn_id': turn_id,
                 'index': index,
                 'evaluation': evaluation_data
             }
         )
-    
+
     async def broadcast_turn_completed(
         self,
         run_id: str,
+        session_id: str,
         turn_id: str,
         index: int
     ):
@@ -131,6 +138,7 @@ class WebSocketOperations:
             {
                 'type': 'turn_completed',
                 'run_id': run_id,
+                'session_id': session_id,
                 'turn_id': turn_id,
                 'index': index
             }

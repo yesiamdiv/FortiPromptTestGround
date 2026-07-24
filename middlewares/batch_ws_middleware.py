@@ -146,12 +146,14 @@ class BatchWSMiddleware(BaseMiddleware):
                     attack = record.get("attack")
                     defence = record.get("defence")
 
+                    session_id = state.get("session_id") or f"sess_{run_id}"
                     # broadcast_attack_generated (existing event)
                     if self.middleware_config.get("broadcast_attacks") and attack:
                         try:
                             attack_text = attack.to_string()
                             await self.ws_ops.broadcast_attack_generated(
                                 run_id,
+                                session_id,
                                 turn_id,
                                 global_index,
                                 {
@@ -170,6 +172,7 @@ class BatchWSMiddleware(BaseMiddleware):
                         try:
                             await self.ws_ops.broadcast_defence_response(
                                 run_id,
+                                session_id,
                                 turn_id,
                                 global_index,
                                 {
@@ -191,6 +194,7 @@ class BatchWSMiddleware(BaseMiddleware):
             # ── "eval" node: broadcast evaluations + stats ───────────────────
             elif node_name == NodeName.EVAL:
                 step("BatchWSMiddleware: broadcasting evaluations", items=len(chunk_results))
+                session_id = state.get("session_id") or f"sess_{run_id}"
 
                 # Running success counter — start from where we left off before this chunk.
                 running_successful = context.get("successful_iterations", 0) - sum(
@@ -207,6 +211,7 @@ class BatchWSMiddleware(BaseMiddleware):
                         try:
                             await self.ws_ops.broadcast_evaluation_complete(
                                 run_id,
+                                session_id,
                                 turn_id,
                                 global_index,
                                 {
@@ -218,7 +223,7 @@ class BatchWSMiddleware(BaseMiddleware):
                                     "timestamp": datetime.utcnow().isoformat(),
                                 },
                             )
-                            await self.ws_ops.broadcast_turn_completed(run_id, turn_id, global_index)
+                            await self.ws_ops.broadcast_turn_completed(run_id, session_id, turn_id, global_index)
 
                             if evaluation.success:
                                 running_successful += 1

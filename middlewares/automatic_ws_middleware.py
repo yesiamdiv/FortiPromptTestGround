@@ -84,7 +84,6 @@ class AutomaticWSMiddleware(BaseMiddleware):
             return
         
         try:
-            print("\n\n\n WE ARE IN AFTER STEP \n\n\n")
             # Extract iteration context
             context = state.get("strategy_context", {})
             iteration = context.get("iteration_count", 0)
@@ -183,6 +182,7 @@ class AutomaticWSMiddleware(BaseMiddleware):
         """Broadcast attack generated event"""
         current_turn = state.get("current_turn", {})
         attack = current_turn.get("attack")
+        session_id = state.get("strategy_context", {}).get("session_id") or f"sess_{run_id}"
         
         if not attack:
             return
@@ -200,6 +200,7 @@ class AutomaticWSMiddleware(BaseMiddleware):
         
         await self.ws_ops.broadcast_attack_generated(
             run_id,
+            session_id,
             turn_id,
             iteration,
             attack_data
@@ -215,6 +216,7 @@ class AutomaticWSMiddleware(BaseMiddleware):
         """Broadcast defence response event"""
         current_turn = state.get("current_turn", {})
         defence = current_turn.get("defence")
+        session_id = state.get("strategy_context", {}).get("session_id") or f"sess_{run_id}"
         
         if not defence:
             return
@@ -231,6 +233,7 @@ class AutomaticWSMiddleware(BaseMiddleware):
         
         await self.ws_ops.broadcast_defence_response(
             run_id,
+            session_id,
             turn_id,
             iteration,
             defence_data
@@ -246,6 +249,7 @@ class AutomaticWSMiddleware(BaseMiddleware):
         """Broadcast evaluation complete event"""
         current_turn = state.get("current_turn", {})
         evaluation = current_turn.get("evaluation")
+        session_id = state.get("strategy_context", {}).get("session_id") or f"sess_{run_id}"
         
         if not evaluation:
             return
@@ -263,6 +267,7 @@ class AutomaticWSMiddleware(BaseMiddleware):
         
         await self.ws_ops.broadcast_evaluation_complete(
             run_id,
+            session_id,
             turn_id,
             iteration,
             evaluation_data
@@ -271,6 +276,7 @@ class AutomaticWSMiddleware(BaseMiddleware):
         # Also broadcast turn completed
         await self.ws_ops.broadcast_turn_completed(
             run_id,
+            session_id,
             turn_id,
             iteration
         )

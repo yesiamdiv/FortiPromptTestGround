@@ -14,6 +14,7 @@ strategy_params:
 """
 
 from typing import Dict, Any, Optional
+import uuid
 from engine.state import SystemState, RoutingSignals
 from strategies.base import AttackStrategy
 from core.logging import debug, tracer, step, warn
@@ -86,7 +87,9 @@ class MultiTurnStrategy(AttackStrategy):
         ctx["conversation_history"] = []
 
         if sessions_done + 1 < sessions_total:
-            step("MultiTurnStrategy: starting new session", session=sessions_done + 1)
+            run_id = state.get("run_id", "unknown")
+            ctx["session_id"] = f"sess_{run_id}_{sessions_done + 1}"
+            step("MultiTurnStrategy: starting new session", session=sessions_done + 1, session_id=ctx["session_id"])
             return RoutingSignals.ATTACK
 
         step("MultiTurnStrategy: all sessions complete")
@@ -149,11 +152,10 @@ class MultiTurnStrategy(AttackStrategy):
         new_history = list(history)
         new_history.append({"role": "attacker", "content": attack_text})
 
-        from core.models import AttackPayload, create_attack_payload
-        from datetime import datetime
+        from core.models import AttackPayload
 
-        payload = create_attack_payload(
-            prompt=attack_text,
+        payload = AttackPayload(
+            data=attack_text,
             metadata={
                 "strategy": "multiturn",
                 "provider": provider_name,
@@ -165,7 +167,7 @@ class MultiTurnStrategy(AttackStrategy):
 
         step("MultiTurnStrategy: attack generated", turn=ctx.get("current_turn_in_session", 0))
         return {
-            "current_turn": {"attack": payload},
+            "current_turn": {"turn_id": f"turn_{uuid.uuid4().hex[:8]}", "attack": payload},
             "strategy_context": {
                 **ctx,
                 "conversation_history": new_history,
